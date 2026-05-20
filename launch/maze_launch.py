@@ -11,7 +11,7 @@ Order:
   8. maze_navigator  (the FSM)
 
 Required environment:
-    export TURTLEBOT3_MODEL=burger
+    export TURTLEBOT3_MODEL=waffle_pi   # or "waffle" / "burger"
 
 Override params at launch time:
     ros2 launch turtlebot3_maze maze_launch.py start_cell:=[1,3] target_cell:=[1,7]
@@ -59,7 +59,10 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # 2) robot_state_publisher (inline — avoids missing namespace in bringup launch).
-    model = os.environ.get("TURTLEBOT3_MODEL", "burger")
+    # Spec calls for a TurtleBot3 with manipulator — default to waffle_pi
+    # (the model the OpenManipulator-X is normally mounted on). Override with
+    # `export TURTLEBOT3_MODEL=waffle` if you need the plain Waffle.
+    model = os.environ.get("TURTLEBOT3_MODEL", "waffle_pi")
     urdf_path = os.path.join(
         get_package_share_directory("turtlebot3_description"),
         "urdf",
@@ -75,11 +78,11 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # 3) Spawn TurtleBot3 (burger) at the start cell.
+    # 3) Spawn the TurtleBot3 (Waffle Pi by default) at the start cell.
     spawn = ExecuteProcess(
         cmd=[
             "ros2", "run", "gazebo_ros", "spawn_entity.py",
-            "-entity", "turtlebot3_burger",
+            "-entity", f"turtlebot3_{model}",
             "-topic", "robot_description",
             "-x", spawn_x,
             "-y", spawn_y,

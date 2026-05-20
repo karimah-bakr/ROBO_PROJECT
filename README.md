@@ -48,8 +48,8 @@ cd ~/ros2_ws
 colcon build --packages-select turtlebot3_maze
 source install/setup.bash
 
-# 3. environment (Burger model)
-export TURTLEBOT3_MODEL=burger
+# 3. environment (Waffle Pi — matches the manipulator setup)
+export TURTLEBOT3_MODEL=waffle_pi    # or "waffle" / "burger"
 
 # 4. launch (defaults: start_cell=[1,3], target_cell=[1,7])
 ros2 launch turtlebot3_maze maze_launch.py
