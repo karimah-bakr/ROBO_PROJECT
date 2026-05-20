@@ -58,11 +58,11 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(os.path.join(gazebo_ros, "launch", "gzclient.launch.py")),
     )
 
-    # 2) robot_state_publisher from the turtlebot3_description package.
-    tb3_desc = get_package_share_directory("turtlebot3_description")
+    # 2) robot_state_publisher (Humble: turtlebot3_bringup, not description/launch).
+    tb3_bringup = get_package_share_directory("turtlebot3_bringup")
     rsp = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(tb3_desc, "launch", "robot_state_publisher.launch.py")
+            os.path.join(tb3_bringup, "launch", "turtlebot3_state_publisher.launch.py")
         ),
         launch_arguments={"use_sim_time": "true"}.items(),
     )
