@@ -28,7 +28,7 @@ from launch.actions import (
     TimerAction,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -58,13 +58,21 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(os.path.join(gazebo_ros, "launch", "gzclient.launch.py")),
     )
 
-    # 2) robot_state_publisher (Humble: turtlebot3_bringup, not description/launch).
-    tb3_bringup = get_package_share_directory("turtlebot3_bringup")
-    rsp = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(tb3_bringup, "launch", "turtlebot3_state_publisher.launch.py")
-        ),
-        launch_arguments={"use_sim_time": "true"}.items(),
+    # 2) robot_state_publisher (inline — avoids missing namespace in bringup launch).
+    model = os.environ.get("TURTLEBOT3_MODEL", "burger")
+    urdf_path = os.path.join(
+        get_package_share_directory("turtlebot3_description"),
+        "urdf",
+        f"turtlebot3_{model}.urdf",
+    )
+    rsp = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="screen",
+        parameters=[
+            {"robot_description": Command(["xacro ", urdf_path])},
+            use_sim_time,
+        ],
     )
 
     # 3) Spawn TurtleBot3 (burger) at the start cell.
