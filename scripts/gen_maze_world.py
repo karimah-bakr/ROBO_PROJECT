@@ -37,11 +37,9 @@ N = 7
 # Maze layout (row index = y from south, column index = x from west).
 #   h[y][x] = horizontal wall on the south edge of row (y+1), column (x+1).
 #   v[x][y] = vertical   wall on the west  edge of column (x+1), row (y+1).
-# Note h[1][2] is intentionally 0 so the official start cell (1,3) can move
-# north into (2,3); without that opening the start cell is fully enclosed.
 H_WALLS = [
     [1, 1, 1, 1, 1, 1, 1],  # y=0  south boundary
-    [0, 0, 0, 0, 1, 0, 0],  # y=1  (was [0,0,1,0,1,0,0]; opened col 3 for start cell)
+    [0, 0, 1, 0, 1, 0, 0],  # y=1
     [1, 0, 1, 0, 1, 0, 1],
     [1, 0, 0, 0, 1, 0, 1],
     [1, 1, 1, 0, 1, 1, 1],
