@@ -70,6 +70,12 @@ class MazeNavigator(Node):
         self.declare_parameter("forward_tolerance_m", 0.01)
         self.declare_parameter("angular_tolerance_rad", 0.02)
         self.declare_parameter("max_explore_steps", 80)
+        # LIDAR-based safe forward motion + corridor centering.
+        self.declare_parameter("front_safety_dist_m", 0.20)
+        self.declare_parameter("front_slow_dist_m", 0.30)
+        self.declare_parameter("centering_gain", 1.2)
+        self.declare_parameter("max_centering_ang", 0.30)
+        self.declare_parameter("centering_max_side_dist_m", 0.32)
 
         sc = list(self.get_parameter("start_cell").value)
         tc = list(self.get_parameter("target_cell").value)
@@ -90,6 +96,11 @@ class MazeNavigator(Node):
         self.fwd_tol = float(self.get_parameter("forward_tolerance_m").value)
         self.ang_tol = float(self.get_parameter("angular_tolerance_rad").value)
         self.max_explore = int(self.get_parameter("max_explore_steps").value)
+        self.front_safety = float(self.get_parameter("front_safety_dist_m").value)
+        self.front_slow = float(self.get_parameter("front_slow_dist_m").value)
+        self.center_gain = float(self.get_parameter("centering_gain").value)
+        self.center_max_ang = float(self.get_parameter("max_centering_ang").value)
+        self.center_side_max = float(self.get_parameter("centering_max_side_dist_m").value)
 
         # FSM
         self.state = "INIT"
@@ -384,7 +395,13 @@ class MazeNavigator(Node):
                 return
             # If we just navigated to target -> place
             if self.objects_found >= 1 and (self.row, self.col) == self._target_internal:
-                self.arm_pub.publish(String(data="PLACE"))
+                # Tell the manipulator the exact world coords so it can drop the
+                # carried object there (Gazebo set_entity_state inside the arm).
+                tx = (self.target_cell[1] - 0.5) * self.cell_size
+                ty = (self.target_cell[0] - 0.5) * self.cell_size
+                self.arm_pub.publish(String(data=json.dumps(
+                    {"cmd": "PLACE", "x": tx, "y": ty, "z": 0.1}
+                )))
                 self.arm_in_flight = True
                 self.arm_last_ok = None
                 self._set_state("PLACE_OBJECT")
@@ -453,7 +470,28 @@ class MazeNavigator(Node):
             if remaining <= self.fwd_tol:
                 self._stop()
                 return True
-            twist.linear.x = self.lin_speed
+
+            # LIDAR safety: if a wall is dangerously close ahead, bail out.
+            fd = self._front_distance()
+            if fd is not None and fd < self.front_safety:
+                self.get_logger().warn(
+                    f"front wall at {fd:.2f}m < safety {self.front_safety:.2f}m -- aborting forward"
+                )
+                m["aborted"] = True
+                self._stop()
+                return True
+
+            # Speed: slow down when getting close to a wall ahead.
+            speed = self.lin_speed
+            if fd is not None and fd < self.front_slow:
+                slow_ratio = max(
+                    0.3,
+                    (fd - self.front_safety) / max(self.front_slow - self.front_safety, 1e-3),
+                )
+                speed = self.lin_speed * slow_ratio
+
+            twist.linear.x = speed
+            twist.angular.z = self._centering_correction()
             self.cmd_pub.publish(twist)
             return False
 
@@ -479,6 +517,24 @@ class MazeNavigator(Node):
         if m is None:
             return
         if m["type"] == "forward":
+            dx = self.odom_x - m["start_x"]
+            dy = self.odom_y - m["start_y"]
+            dist = math.sqrt(dx * dx + dy * dy)
+            # If the forward step aborted before crossing the cell midline,
+            # stay where we were and drop the rest of the queued moves --
+            # the planner will replan from the actual position.
+            if m.get("aborted") and dist < self.cell_size * 0.5:
+                self.get_logger().info(
+                    f"forward aborted at {dist:.2f}m (cell stays "
+                    f"({self.row + 1},{self.col + 1})); requesting fresh plan"
+                )
+                self.move_queue.clear()
+                self.pending_request_id = None
+                self._publish_observation()
+                # Force the FSM back into observation/plan rather than the
+                # state we were running, so we don't dead-reckon into a wall.
+                self._set_state("OBSERVE_CELL")
+                return
             dr = DR[self.heading]
             dc = DC[self.heading]
             self.row += dr
@@ -496,6 +552,45 @@ class MazeNavigator(Node):
                 self.heading = HEADINGS[(i + 1) % 4]
             elif abs(target - math.pi) < 0.1:            # TURN_180
                 self.heading = HEADINGS[(i + 2) % 4]
+
+    # ------------------------------------------------------------------
+    # LIDAR helpers used during forward motion
+
+    def _front_distance(self) -> Optional[float]:
+        if self.latest_walls is None:
+            return None
+        r = self.latest_walls.get("ranges", {}).get("F")
+        if r is None:
+            return None
+        try:
+            r = float(r)
+        except (TypeError, ValueError):
+            return None
+        return None if not math.isfinite(r) else r
+
+    def _centering_correction(self) -> float:
+        """Small angular bias that keeps the robot midway between L/R walls."""
+        if self.latest_walls is None:
+            return 0.0
+        ranges = self.latest_walls.get("ranges", {})
+        l = ranges.get("L")
+        r = ranges.get("R")
+        try:
+            l = float(l) if l is not None else None
+            r = float(r) if r is not None else None
+        except (TypeError, ValueError):
+            return 0.0
+        if l is None or r is None:
+            return 0.0
+        if not (math.isfinite(l) and math.isfinite(r)):
+            return 0.0
+        # Only correct when *both* side walls are present at a sensible range.
+        if l > self.center_side_max or r > self.center_side_max:
+            return 0.0
+        # +err -> more clearance on left -> rotate left (+ang.z) to recenter.
+        err = l - r
+        ang = self.center_gain * err
+        return max(-self.center_max_ang, min(self.center_max_ang, ang))
 
     # ------------------------------------------------------------------
 

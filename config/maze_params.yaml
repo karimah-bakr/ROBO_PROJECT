@@ -20,6 +20,13 @@ maze_navigator:
     forward_tolerance_m: 0.01 # stop band when odometry reaches +0.5 m
     angular_tolerance_rad: 0.02
 
+    # LIDAR-based forward safety and corridor centering.
+    front_safety_dist_m: 0.20       # abort forward if F-range drops below this
+    front_slow_dist_m: 0.30         # below this, scale speed down toward 0.3x
+    centering_gain: 1.2             # P-gain on (L-R) range error -> ang.z
+    max_centering_ang: 0.30         # rad/s clamp on the centering correction
+    centering_max_side_dist_m: 0.32 # only center if both sides see a wall within this
+
     # FSM behaviour
     max_explore_steps: 80     # safety cap on BFS expansion iterations
     object_pickup_offset_m: 0.15  # approach this far in front of object cell

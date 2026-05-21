@@ -1,20 +1,24 @@
 """OpenManipulator-X controller node.
 
 Exposes high-level "pick" / "place" / "home" actions through a simple
-std_msgs/String trigger topic and reports completion on /arm_status.
-
-Internally it calls the open_manipulator_msgs/SetJointPosition service
-on /open_manipulator/goal_joint_space_path and /goal_tool_control,
-waiting `step_wait_s` seconds between sub-motions so the physical arm
-can complete each pose before the next is queued.
+trigger topic and reports completion on /arm_status.
 
 Topic protocol:
-    /arm_command  std_msgs/String      one of: "PICK", "PLACE", "HOME"
+    /arm_command  std_msgs/String      Plain command ("PICK"/"PLACE"/"HOME") OR
+                                       JSON {"cmd": "PLACE", "x": 3.25, "y": 0.25}.
+                                       The optional x/y/z on PLACE tells the node
+                                       where to drop the currently-held object.
     /arm_status   std_msgs/String JSON {"cmd": "...", "ok": true|false, "reason": "..."}
 
-If the open_manipulator_msgs package is not available in the workspace
-(e.g. headless tests, no arm bringup), the node falls back to a stub
-that just logs the would-be commands so the FSM can still progress.
+Internally:
+    - The arm motions go through open_manipulator_msgs/SetJointPosition if the
+      service is up (real hardware / full bringup). Otherwise it's a sleep stub
+      so the FSM can still progress in headless tests.
+    - To make the two-object delivery actually visible in Gazebo, the node
+      teleports the held SDF model via gazebo_msgs/SetEntityState: object_1 on
+      the first PICK and object_2 on the second, "stowed" off-screen while
+      carried and dropped at the place pose. Without gazebo_msgs the teleport
+      step is silently skipped.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -37,9 +41,18 @@ except Exception:  # pragma: no cover
     SetJointPosition = None  # type: ignore
     HAVE_OM = False
 
+try:  # pragma: no cover  -- environment dependent
+    from gazebo_msgs.srv import SetEntityState  # type: ignore
+    HAVE_GZ = True
+except Exception:  # pragma: no cover
+    SetEntityState = None  # type: ignore
+    HAVE_GZ = False
+
 
 JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4"]
 GRIPPER_NAMES = ["gripper"]
+OBJECT_NAMES = ("object_1", "object_2")
+STOW_Z = -2.0  # park height while the object is being carried
 
 
 class ManipulatorControllerNode(Node):
@@ -76,22 +89,58 @@ class ManipulatorControllerNode(Node):
                 SetJointPosition, "/open_manipulator/goal_tool_control"
             )
 
+        # Optional Gazebo teleport client (for the two-object visual handoff).
+        self._gz_cli = None
+        if HAVE_GZ:
+            self._gz_cli = self.create_client(SetEntityState, "/gazebo/set_entity_state")
+
+        # Two objects: object_1 first, object_2 second. The counter advances
+        # on every PICK and is reset by HOME for re-runs.
+        self._next_object_idx = 0
+        self._held_object: Optional[str] = None
+
         self._busy = threading.Lock()
         self.get_logger().info(
-            f"manipulator_controller ready (open_manipulator_msgs={'yes' if HAVE_OM else 'STUB'})"
+            "manipulator_controller ready "
+            f"(open_manipulator_msgs={'yes' if HAVE_OM else 'STUB'}, "
+            f"gazebo_set_entity_state={'yes' if HAVE_GZ else 'no'})"
         )
 
     # ------------------------------------------------------------------
 
     def _on_cmd(self, msg: String) -> None:
-        cmd = (msg.data or "").strip().upper()
+        raw = (msg.data or "").strip()
+        place_pose: Optional[Tuple[float, float, float]] = None
+        if raw.startswith("{"):
+            try:
+                data = json.loads(raw)
+            except ValueError as exc:
+                self._report("?", ok=False, reason=f"bad JSON: {exc}")
+                return
+            cmd = str(data.get("cmd", "")).upper()
+            if "x" in data and "y" in data:
+                try:
+                    place_pose = (
+                        float(data["x"]),
+                        float(data["y"]),
+                        float(data.get("z", 0.1)),
+                    )
+                except (TypeError, ValueError) as exc:
+                    self._report(cmd, ok=False, reason=f"bad pose: {exc}")
+                    return
+        else:
+            cmd = raw.upper()
+
         if cmd not in ("PICK", "PLACE", "HOME"):
             self._report(cmd, ok=False, reason="unknown command")
             return
-        # Run sequence in a worker thread so we don't block the executor.
-        threading.Thread(target=self._run_sequence, args=(cmd,), daemon=True).start()
+        threading.Thread(
+            target=self._run_sequence, args=(cmd, place_pose), daemon=True,
+        ).start()
 
-    def _run_sequence(self, cmd: str) -> None:
+    def _run_sequence(
+        self, cmd: str, place_pose: Optional[Tuple[float, float, float]] = None,
+    ) -> None:
         if not self._busy.acquire(blocking=False):
             self._report(cmd, ok=False, reason="arm busy")
             return
@@ -99,9 +148,11 @@ class ManipulatorControllerNode(Node):
             if cmd == "PICK":
                 ok = self._pick()
             elif cmd == "PLACE":
-                ok = self._place()
+                ok = self._place(place_pose)
             else:
                 ok = self._send_joints(self.home, "home")
+                self._next_object_idx = 0
+                self._held_object = None
             self._report(cmd, ok=ok)
         except Exception as exc:
             self.get_logger().error(f"arm sequence {cmd} failed: {exc}")
@@ -120,16 +171,62 @@ class ManipulatorControllerNode(Node):
         ok &= self._send_joints(self.lower, "lower to object")
         ok &= self._send_gripper(self.g_close, "close gripper")
         ok &= self._send_joints(self.carry, "lift to carry")
+        # Visually "take" the object away from the floor so the FSM can verify
+        # which object is currently held when the second pickup runs.
+        if self._next_object_idx < len(OBJECT_NAMES):
+            name = OBJECT_NAMES[self._next_object_idx]
+            self._next_object_idx += 1
+            self._held_object = name
+            self._teleport(name, x=0.0, y=0.0, z=STOW_Z)
+            self.get_logger().info(f"carrying {name}")
+        else:
+            self.get_logger().warn("PICK requested but no objects left to grab")
         return ok
 
-    def _place(self) -> bool:
-        self.get_logger().info("ARM: PLACE sequence")
+    def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
+        self.get_logger().info(f"ARM: PLACE sequence (target pose={pose})")
         ok = True
         ok &= self._send_joints(self.reach, "extend over target")
         ok &= self._send_joints(self.lower, "lower to ground")
         ok &= self._send_gripper(self.g_open, "release object")
         ok &= self._send_joints(self.home, "retract home")
+        if self._held_object is not None and pose is not None:
+            # Stagger the two objects a few cm apart so the second one doesn't
+            # spawn inside the first.
+            x, y, z = pose
+            offset = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
+            self._teleport(self._held_object, x=x + offset, y=y, z=max(z, 0.1))
+            self.get_logger().info(
+                f"dropped {self._held_object} at ({x + offset:.2f}, {y:.2f})"
+            )
+            self._held_object = None
+        elif self._held_object is not None:
+            self.get_logger().warn(
+                "PLACE: no target pose provided; object stays stowed"
+            )
         return ok
+
+    # ------------------------------------------------------------------
+    # Gazebo teleport
+
+    def _teleport(self, name: str, x: float, y: float, z: float) -> None:
+        if self._gz_cli is None:
+            return
+        if not self._gz_cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn("set_entity_state service not ready; skipping teleport")
+            return
+        req = SetEntityState.Request()
+        try:
+            req.state.name = name
+            req.state.pose.position.x = float(x)
+            req.state.pose.position.y = float(y)
+            req.state.pose.position.z = float(z)
+            req.state.pose.orientation.w = 1.0
+            req.state.reference_frame = "world"
+        except Exception as exc:
+            self.get_logger().warn(f"could not fill teleport request: {exc}")
+            return
+        self._gz_cli.call_async(req)
 
     # ------------------------------------------------------------------
     # Low-level helpers
