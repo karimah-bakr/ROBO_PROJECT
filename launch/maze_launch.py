@@ -144,7 +144,7 @@ def generate_launch_description() -> LaunchDescription:
         executable="standalone_navigator",
         name="standalone_navigator",
         output="screen",
-        parameters=[use_sim_time],
+        parameters=[params_path, use_sim_time],
     )
 
     rviz = Node(

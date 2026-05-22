@@ -5,9 +5,10 @@ trigger topic and reports completion on /arm_status.
 
 Topic protocol:
     /arm_command  std_msgs/String      Plain command ("PICK"/"PLACE"/"HOME") OR
-                                       JSON {"cmd": "PLACE", "x": 3.25, "y": 0.25}.
-                                       The optional x/y/z on PLACE tells the node
-                                       where to drop the currently-held object.
+                                       JSON {"cmd": "PICK",  "x": 0.25, "y": 2.25, "z": 0.1}
+                                       JSON {"cmd": "PLACE", "x": 3.25, "y": 0.25, "z": 0.1}
+                                       x/y/z = world pose of the object cell (pick) or
+                                       target cell centre (place).
     /arm_status   std_msgs/String JSON {"cmd": "...", "ok": true|false, "reason": "..."}
 
 Internally:
@@ -110,7 +111,7 @@ class ManipulatorControllerNode(Node):
 
     def _on_cmd(self, msg: String) -> None:
         raw = (msg.data or "").strip()
-        place_pose: Optional[Tuple[float, float, float]] = None
+        world_pose: Optional[Tuple[float, float, float]] = None
         if raw.startswith("{"):
             try:
                 data = json.loads(raw)
@@ -120,7 +121,7 @@ class ManipulatorControllerNode(Node):
             cmd = str(data.get("cmd", "")).upper()
             if "x" in data and "y" in data:
                 try:
-                    place_pose = (
+                    world_pose = (
                         float(data["x"]),
                         float(data["y"]),
                         float(data.get("z", 0.1)),
@@ -135,20 +136,20 @@ class ManipulatorControllerNode(Node):
             self._report(cmd, ok=False, reason="unknown command")
             return
         threading.Thread(
-            target=self._run_sequence, args=(cmd, place_pose), daemon=True,
+            target=self._run_sequence, args=(cmd, world_pose), daemon=True,
         ).start()
 
     def _run_sequence(
-        self, cmd: str, place_pose: Optional[Tuple[float, float, float]] = None,
+        self, cmd: str, world_pose: Optional[Tuple[float, float, float]] = None,
     ) -> None:
         if not self._busy.acquire(blocking=False):
             self._report(cmd, ok=False, reason="arm busy")
             return
         try:
             if cmd == "PICK":
-                ok = self._pick()
+                ok = self._pick(world_pose)
             elif cmd == "PLACE":
-                ok = self._place(place_pose)
+                ok = self._place(world_pose)
             else:
                 ok = self._send_joints(self.home, "home")
                 self._next_object_idx = 0
@@ -163,24 +164,28 @@ class ManipulatorControllerNode(Node):
     # ------------------------------------------------------------------
     # Sequences
 
-    def _pick(self) -> bool:
-        self.get_logger().info("ARM: PICK sequence")
+    def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
+        self.get_logger().info(f"ARM: PICK sequence (object pose={pose})")
         ok = True
         ok &= self._send_gripper(self.g_open, "open gripper")
         ok &= self._send_joints(self.reach, "reach forward")
         ok &= self._send_joints(self.lower, "lower to object")
         ok &= self._send_gripper(self.g_close, "close gripper")
         ok &= self._send_joints(self.carry, "lift to carry")
-        # Visually "take" the object away from the floor so the FSM can verify
-        # which object is currently held when the second pickup runs.
-        if self._next_object_idx < len(OBJECT_NAMES):
-            name = OBJECT_NAMES[self._next_object_idx]
-            self._next_object_idx += 1
-            self._held_object = name
-            self._teleport(name, x=0.0, y=0.0, z=STOW_Z)
-            self.get_logger().info(f"carrying {name}")
-        else:
+        if self._next_object_idx >= len(OBJECT_NAMES):
             self.get_logger().warn("PICK requested but no objects left to grab")
+            return ok
+        name = OBJECT_NAMES[self._next_object_idx]
+        self._next_object_idx += 1
+        self._held_object = name
+        # In Gazebo (burger has no arm mesh): teleport the cube off the floor.
+        if pose is not None:
+            ox, oy, oz = pose
+            side = -0.03 if name == OBJECT_NAMES[0] else 0.03
+            self._teleport(name, x=ox + side, y=oy, z=oz)
+            time.sleep(0.3)
+        self._teleport(name, x=0.0, y=0.0, z=STOW_Z)
+        self.get_logger().info(f"carrying {name} (stowed below world)")
         return ok
 
     def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
@@ -190,31 +195,34 @@ class ManipulatorControllerNode(Node):
         ok &= self._send_joints(self.lower, "lower to ground")
         ok &= self._send_gripper(self.g_open, "release object")
         ok &= self._send_joints(self.home, "retract home")
-        if self._held_object is not None and pose is not None:
-            # Stagger the two objects a few cm apart so the second one doesn't
-            # spawn inside the first.
-            x, y, z = pose
-            offset = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
-            self._teleport(self._held_object, x=x + offset, y=y, z=max(z, 0.1))
-            self.get_logger().info(
-                f"dropped {self._held_object} at ({x + offset:.2f}, {y:.2f})"
-            )
-            self._held_object = None
-        elif self._held_object is not None:
-            self.get_logger().warn(
-                "PLACE: no target pose provided; object stays stowed"
-            )
+        if self._held_object is None:
+            self.get_logger().warn("PLACE: nothing held")
+            return ok
+        if pose is None:
+            self.get_logger().warn("PLACE: no target pose; object stays stowed")
+            return ok
+        x, y, z = pose
+        offset = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
+        drop_x, drop_y, drop_z = x + offset, y, max(z, 0.10)
+        ok &= self._teleport(self._held_object, x=drop_x, y=drop_y, z=drop_z)
+        self.get_logger().info(
+            f"dropped {self._held_object} at target cell ({drop_x:.2f}, {drop_y:.2f})"
+        )
+        self._held_object = None
         return ok
 
     # ------------------------------------------------------------------
     # Gazebo teleport
 
-    def _teleport(self, name: str, x: float, y: float, z: float) -> None:
+    def _teleport(self, name: str, x: float, y: float, z: float) -> bool:
         if self._gz_cli is None:
-            return
-        if not self._gz_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().warn("set_entity_state service not ready; skipping teleport")
-            return
+            self.get_logger().warn(
+                f"gazebo_msgs unavailable — cannot move {name} (install ros-humble-gazebo-ros-pkgs)"
+            )
+            return True  # allow FSM to continue in stub mode
+        if not self._gz_cli.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn("set_entity_state not ready; skipping teleport")
+            return False
         req = SetEntityState.Request()
         try:
             req.state.name = name
@@ -225,8 +233,9 @@ class ManipulatorControllerNode(Node):
             req.state.reference_frame = "world"
         except Exception as exc:
             self.get_logger().warn(f"could not fill teleport request: {exc}")
-            return
-        self._gz_cli.call_async(req)
+            return False
+        future = self._gz_cli.call_async(req)
+        return self._await(future, timeout=5.0, label=f"teleport {name}")
 
     # ------------------------------------------------------------------
     # Low-level helpers
