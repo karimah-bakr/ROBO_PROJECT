@@ -72,6 +72,9 @@ standalone_navigator:
     goal_arrival_tol_m: 0.18
     # Skip LIDAR forward-abort when this close to the active goto goal centre.
     goal_lidar_bypass_m: 0.25
+    # Stop one cell before object cell; face into objects to pick.
+    pick_approach_cell: [5, 2]
+    pick_face_heading: "W"
 
 manipulator_controller:
   ros__parameters:

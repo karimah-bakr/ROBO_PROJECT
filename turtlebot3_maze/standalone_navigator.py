@@ -3,8 +3,8 @@
 
 Mission
 -------
-    (1,3) start -> (5,1) pick object_1 -> (1,7) place
-                -> (5,1) pick object_2 -> (1,7) place
+    (1,3) start -> (5,2) approach -> pick at (5,1) -> (1,7) place
+                -> (5,2) approach -> pick -> (1,7) place
                 -> (1,3) return -> done
 
 The script does everything itself:
@@ -73,6 +73,9 @@ COLS = 7
 
 START_CELL  = (1, 3)
 OBJECT_CELL = (5, 1)
+# Stand one cell east of objects, face west into OBJECT_CELL to pick.
+PICK_APPROACH_CELL = (5, 2)
+PICK_FACE = "W"
 TARGET_CELL = (1, 7)
 
 # Initial heading from launch: spawn_yaw = pi/2 -> facing North (+Y).
@@ -199,8 +202,13 @@ class MazeMissionNavigator(Node):
 
         self.declare_parameter("goal_arrival_tol_m", self.GOAL_ARRIVAL_TOL)
         self.declare_parameter("goal_lidar_bypass_m", self.GOAL_LIDAR_BYPASS)
+        self.declare_parameter("pick_approach_cell", [5, 2])
+        self.declare_parameter("pick_face_heading", PICK_FACE)
         self.goal_arrival_tol = float(self.get_parameter("goal_arrival_tol_m").value)
         self.goal_lidar_bypass = float(self.get_parameter("goal_lidar_bypass_m").value)
+        ap = self.get_parameter("pick_approach_cell").value
+        self.pick_approach = (int(ap[0]), int(ap[1]))
+        self.pick_face = str(self.get_parameter("pick_face_heading").value)
 
         # Gazebo publishes /odom as reliable; /scan as sensor (best effort).
         odom_qos = QoSProfile(
@@ -239,11 +247,11 @@ class MazeMissionNavigator(Node):
         # kinds: "goto" -> goal_cell ; "pick" -> None ; "place" -> (x,y,z)
         target_xy = cell_center(TARGET_CELL)
         self.script: List[Tuple[str, object]] = [
-            ("goto",  OBJECT_CELL),
+            ("goto",  self.pick_approach),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
-            ("goto",  OBJECT_CELL),
+            ("goto",  self.pick_approach),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
@@ -270,7 +278,9 @@ class MazeMissionNavigator(Node):
         self.create_timer(2.0, self._heartbeat)
         self.get_logger().info(
             f"standalone_navigator ready: "
-            f"start={START_CELL} object={OBJECT_CELL} target={TARGET_CELL}"
+            f"start={START_CELL} object={OBJECT_CELL} "
+            f"pick_approach={self.pick_approach} face={self.pick_face} "
+            f"target={TARGET_CELL}"
         )
 
     def _at_goal_cell(self, goal: Tuple[int, int]) -> bool:
@@ -442,7 +452,8 @@ class MazeMissionNavigator(Node):
             ox, oy = cell_center(OBJECT_CELL)
             self._arm_step(
                 "pick",
-                must_be_at=OBJECT_CELL,
+                must_be_at=self.pick_approach,
+                face=self.pick_face,
                 payload={
                     "cmd": "PICK",
                     "x": ox, "y": oy, "z": 0.10,
@@ -584,7 +595,18 @@ class MazeMissionNavigator(Node):
         label: str,
         must_be_at: Tuple[int, int],
         payload: dict,
+        face: Optional[str] = None,
     ) -> None:
+        if face and self.heading != face:
+            self.get_logger().info(
+                f"{label}: align heading {self.heading} -> {face} for arm reach"
+            )
+            self.motion = {
+                "type": "turn",
+                "target_yaw": YAW[face],
+                "next_heading": face,
+            }
+            return
         if self.cell != must_be_at and not self._at_goal_cell(must_be_at):
             self.cell = self._nearest_reachable_cell(self.cell)
             cells = bfs(self.cell, must_be_at)
