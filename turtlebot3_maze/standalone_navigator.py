@@ -3,8 +3,8 @@
 
 Mission
 -------
-    (1,3) start -> (5,1) pick object_1 -> (1,7) place
-                -> (5,1) pick object_2 -> (1,7) place
+    (1,3) start -> (5,2) pick (objects in 5,1) -> (1,7) place
+                -> (5,2) pick object_2 -> (1,7) place
                 -> (1,3) return -> done
 
 The script does everything itself:
@@ -72,8 +72,11 @@ ROWS = 7
 COLS = 7
 
 START_CELL  = (1, 3)
-OBJECT_CELL = (5, 1)
+OBJECT_CELL = (5, 1)   # where the cubes sit in the world
+PICK_CELL   = (5, 2)   # stand here facing W to pick objects in (5,1)
 TARGET_CELL = (1, 7)
+PICK_FACE   = "W"
+CELL_ARRIVE_TOL_M = 0.28  # odom snap if close enough to a cell centre
 
 # Initial heading from launch: spawn_yaw = pi/2 -> facing North (+Y).
 INITIAL_HEADING = "N"
@@ -204,11 +207,11 @@ class MazeMissionNavigator(Node):
         # kinds: "goto" -> goal_cell ; "pick" -> None ; "place" -> (x,y,z)
         target_xy = cell_center(TARGET_CELL)
         self.script: List[Tuple[str, object]] = [
-            ("goto",  OBJECT_CELL),
+            ("goto",  PICK_CELL),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
-            ("goto",  OBJECT_CELL),
+            ("goto",  PICK_CELL),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
@@ -232,8 +235,12 @@ class MazeMissionNavigator(Node):
         self.create_timer(2.0, self._heartbeat)
         self.get_logger().info(
             f"standalone_navigator ready: "
-            f"start={START_CELL} object={OBJECT_CELL} target={TARGET_CELL}"
+            f"start={START_CELL} pick@{PICK_CELL} object={OBJECT_CELL} target={TARGET_CELL}"
         )
+
+    def _near_cell(self, cell: Tuple[int, int]) -> bool:
+        cx, cy = cell_center(cell)
+        return math.hypot(self.x - cx, self.y - cy) < self.CELL_ARRIVE_TOL_M
 
     def _heartbeat(self) -> None:
         kind = self.script[self.script_i][0] if self.script_i < len(self.script) else "idle"
@@ -328,7 +335,9 @@ class MazeMissionNavigator(Node):
         if kind == "goto":
             goal = payload  # type: ignore[assignment]
             assert isinstance(goal, tuple)
-            if self.cell == goal:
+            if self.cell == goal or self._near_cell(goal):
+                self.cell = goal
+                self.get_logger().info(f"arrived at cell {goal}")
                 self.script_i += 1
                 return
             cells = bfs(self.cell, goal)
@@ -347,7 +356,8 @@ class MazeMissionNavigator(Node):
             ox, oy = cell_center(OBJECT_CELL)
             self._arm_step(
                 "pick",
-                must_be_at=OBJECT_CELL,
+                must_be_at=PICK_CELL,
+                face=PICK_FACE,
                 payload={"cmd": "PICK", "x": ox, "y": oy, "z": 0.10},
             )
             return
@@ -443,9 +453,15 @@ class MazeMissionNavigator(Node):
 
         # forward
         if m.get("aborted"):
-            # Drop the rest of the queued plan and let the next tick re-plan
-            # from the (unchanged) current cell.
-            self.get_logger().warn("forward aborted; re-planning from current cell")
+            dist = math.hypot(self.x - m["start_x"], self.y - m["start_y"])
+            if dist >= CELL * 0.65:
+                self.cell = m["next_cell"]
+                self.step_queue.pop(0)
+                self.get_logger().warn(
+                    f"forward partial ({dist:.2f}m) -> snapped to cell {self.cell}"
+                )
+                return
+            self.get_logger().warn("forward aborted early; re-planning")
             self.step_queue.clear()
             return
 
@@ -459,7 +475,18 @@ class MazeMissionNavigator(Node):
         label: str,
         must_be_at: Tuple[int, int],
         payload: dict,
+        face: Optional[str] = None,
     ) -> None:
+        if face and self.heading != face:
+            self.get_logger().info(f"{label}: turn {self.heading} -> {face} for pick/place")
+            self.motion = {
+                "type": "turn",
+                "target_yaw": YAW[face],
+                "next_heading": face,
+            }
+            return
+        if self._near_cell(must_be_at):
+            self.cell = must_be_at
         if self.cell != must_be_at:
             cells = bfs(self.cell, must_be_at)
             if not cells:

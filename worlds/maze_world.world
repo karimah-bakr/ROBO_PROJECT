@@ -16,7 +16,7 @@
 
     <model name="h_0">
       <static>true</static>
-      <pose>0.250 0.000 0.100 0 0 0</pose>
+      <pose>0.750 0.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -33,7 +33,7 @@
 
     <model name="h_1">
       <static>true</static>
-      <pose>0.750 0.000 0.100 0 0 0</pose>
+      <pose>1.250 0.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -50,7 +50,7 @@
 
     <model name="h_2">
       <static>true</static>
-      <pose>1.250 0.000 0.100 0 0 0</pose>
+      <pose>2.250 0.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -67,7 +67,7 @@
 
     <model name="h_3">
       <static>true</static>
-      <pose>1.750 0.000 0.100 0 0 0</pose>
+      <pose>2.750 0.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -84,7 +84,7 @@
 
     <model name="h_4">
       <static>true</static>
-      <pose>2.250 0.000 0.100 0 0 0</pose>
+      <pose>2.250 0.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -101,7 +101,7 @@
 
     <model name="h_5">
       <static>true</static>
-      <pose>2.750 0.000 0.100 0 0 0</pose>
+      <pose>0.250 1.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -118,7 +118,7 @@
 
     <model name="h_6">
       <static>true</static>
-      <pose>3.250 0.000 0.100 0 0 0</pose>
+      <pose>1.250 1.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -135,7 +135,7 @@
 
     <model name="h_7">
       <static>true</static>
-      <pose>2.250 0.500 0.100 0 0 0</pose>
+      <pose>2.250 1.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -152,7 +152,7 @@
 
     <model name="h_8">
       <static>true</static>
-      <pose>0.250 1.000 0.100 0 0 0</pose>
+      <pose>3.250 1.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -169,7 +169,7 @@
 
     <model name="h_9">
       <static>true</static>
-      <pose>1.250 1.000 0.100 0 0 0</pose>
+      <pose>0.250 1.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -186,7 +186,7 @@
 
     <model name="h_10">
       <static>true</static>
-      <pose>2.250 1.000 0.100 0 0 0</pose>
+      <pose>2.250 1.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -203,7 +203,7 @@
 
     <model name="h_11">
       <static>true</static>
-      <pose>3.250 1.000 0.100 0 0 0</pose>
+      <pose>3.250 1.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -220,7 +220,7 @@
 
     <model name="h_12">
       <static>true</static>
-      <pose>0.250 1.500 0.100 0 0 0</pose>
+      <pose>0.250 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -237,7 +237,7 @@
 
     <model name="h_13">
       <static>true</static>
-      <pose>2.250 1.500 0.100 0 0 0</pose>
+      <pose>0.750 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -254,7 +254,7 @@
 
     <model name="h_14">
       <static>true</static>
-      <pose>3.250 1.500 0.100 0 0 0</pose>
+      <pose>1.250 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -271,7 +271,7 @@
 
     <model name="h_15">
       <static>true</static>
-      <pose>0.250 2.000 0.100 0 0 0</pose>
+      <pose>2.250 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -288,7 +288,7 @@
 
     <model name="h_16">
       <static>true</static>
-      <pose>0.750 2.000 0.100 0 0 0</pose>
+      <pose>2.750 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -305,7 +305,7 @@
 
     <model name="h_17">
       <static>true</static>
-      <pose>1.250 2.000 0.100 0 0 0</pose>
+      <pose>3.250 2.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -322,7 +322,7 @@
 
     <model name="h_18">
       <static>true</static>
-      <pose>2.250 2.000 0.100 0 0 0</pose>
+      <pose>0.250 2.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -339,7 +339,7 @@
 
     <model name="h_19">
       <static>true</static>
-      <pose>2.750 2.000 0.100 0 0 0</pose>
+      <pose>3.250 2.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -356,7 +356,7 @@
 
     <model name="h_20">
       <static>true</static>
-      <pose>3.250 2.000 0.100 0 0 0</pose>
+      <pose>0.250 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -373,7 +373,7 @@
 
     <model name="h_21">
       <static>true</static>
-      <pose>0.250 2.500 0.100 0 0 0</pose>
+      <pose>1.250 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -390,7 +390,7 @@
 
     <model name="h_22">
       <static>true</static>
-      <pose>3.250 2.500 0.100 0 0 0</pose>
+      <pose>1.750 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -407,7 +407,7 @@
 
     <model name="h_23">
       <static>true</static>
-      <pose>0.250 3.000 0.100 0 0 0</pose>
+      <pose>2.250 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -424,7 +424,7 @@
 
     <model name="h_24">
       <static>true</static>
-      <pose>1.250 3.000 0.100 0 0 0</pose>
+      <pose>2.750 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -441,7 +441,7 @@
 
     <model name="h_25">
       <static>true</static>
-      <pose>1.750 3.000 0.100 0 0 0</pose>
+      <pose>3.250 3.000 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -458,7 +458,7 @@
 
     <model name="h_26">
       <static>true</static>
-      <pose>2.250 3.000 0.100 0 0 0</pose>
+      <pose>1.250 3.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -475,7 +475,7 @@
 
     <model name="h_27">
       <static>true</static>
-      <pose>2.750 3.000 0.100 0 0 0</pose>
+      <pose>1.750 3.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -492,7 +492,7 @@
 
     <model name="h_28">
       <static>true</static>
-      <pose>3.250 3.000 0.100 0 0 0</pose>
+      <pose>2.250 3.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -509,7 +509,7 @@
 
     <model name="h_29">
       <static>true</static>
-      <pose>1.250 3.500 0.100 0 0 0</pose>
+      <pose>2.750 3.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
           <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
@@ -526,57 +526,6 @@
 
     <model name="h_30">
       <static>true</static>
-      <pose>1.750 3.500 0.100 0 0 0</pose>
-      <link name="link">
-        <collision name="col">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-          <material>
-            <ambient>0.6 0.4 0.2 1</ambient>
-            <diffuse>0.6 0.4 0.2 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="h_31">
-      <static>true</static>
-      <pose>2.250 3.500 0.100 0 0 0</pose>
-      <link name="link">
-        <collision name="col">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-          <material>
-            <ambient>0.6 0.4 0.2 1</ambient>
-            <diffuse>0.6 0.4 0.2 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="h_32">
-      <static>true</static>
-      <pose>2.750 3.500 0.100 0 0 0</pose>
-      <link name="link">
-        <collision name="col">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-        </collision>
-        <visual name="vis">
-          <geometry><box><size>0.500 0.015 0.200</size></box></geometry>
-          <material>
-            <ambient>0.6 0.4 0.2 1</ambient>
-            <diffuse>0.6 0.4 0.2 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="h_33">
-      <static>true</static>
       <pose>3.250 3.500 0.100 0 0 0</pose>
       <link name="link">
         <collision name="col">
@@ -592,7 +541,7 @@
       </link>
     </model>
 
-    <model name="v_34">
+    <model name="v_31">
       <static>true</static>
       <pose>0.000 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -609,7 +558,7 @@
       </link>
     </model>
 
-    <model name="v_35">
+    <model name="v_32">
       <static>true</static>
       <pose>0.000 0.750 0.100 0 0 0</pose>
       <link name="link">
@@ -626,7 +575,7 @@
       </link>
     </model>
 
-    <model name="v_36">
+    <model name="v_33">
       <static>true</static>
       <pose>0.000 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -643,7 +592,7 @@
       </link>
     </model>
 
-    <model name="v_37">
+    <model name="v_34">
       <static>true</static>
       <pose>0.000 1.750 0.100 0 0 0</pose>
       <link name="link">
@@ -660,7 +609,7 @@
       </link>
     </model>
 
-    <model name="v_38">
+    <model name="v_35">
       <static>true</static>
       <pose>0.000 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -677,7 +626,7 @@
       </link>
     </model>
 
-    <model name="v_39">
+    <model name="v_36">
       <static>true</static>
       <pose>0.000 2.750 0.100 0 0 0</pose>
       <link name="link">
@@ -694,7 +643,7 @@
       </link>
     </model>
 
-    <model name="v_40">
+    <model name="v_37">
       <static>true</static>
       <pose>0.000 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -711,7 +660,7 @@
       </link>
     </model>
 
-    <model name="v_41">
+    <model name="v_38">
       <static>true</static>
       <pose>0.500 0.750 0.100 0 0 0</pose>
       <link name="link">
@@ -728,7 +677,7 @@
       </link>
     </model>
 
-    <model name="v_42">
+    <model name="v_39">
       <static>true</static>
       <pose>0.500 1.750 0.100 0 0 0</pose>
       <link name="link">
@@ -745,7 +694,7 @@
       </link>
     </model>
 
-    <model name="v_43">
+    <model name="v_40">
       <static>true</static>
       <pose>0.500 2.750 0.100 0 0 0</pose>
       <link name="link">
@@ -762,7 +711,7 @@
       </link>
     </model>
 
-    <model name="v_44">
+    <model name="v_41">
       <static>true</static>
       <pose>1.000 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -779,7 +728,7 @@
       </link>
     </model>
 
-    <model name="v_45">
+    <model name="v_42">
       <static>true</static>
       <pose>1.000 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -796,7 +745,7 @@
       </link>
     </model>
 
-    <model name="v_46">
+    <model name="v_43">
       <static>true</static>
       <pose>1.000 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -813,7 +762,7 @@
       </link>
     </model>
 
-    <model name="v_47">
+    <model name="v_44">
       <static>true</static>
       <pose>1.000 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -830,7 +779,7 @@
       </link>
     </model>
 
-    <model name="v_48">
+    <model name="v_45">
       <static>true</static>
       <pose>1.500 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -847,7 +796,7 @@
       </link>
     </model>
 
-    <model name="v_49">
+    <model name="v_46">
       <static>true</static>
       <pose>1.500 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -864,7 +813,7 @@
       </link>
     </model>
 
-    <model name="v_50">
+    <model name="v_47">
       <static>true</static>
       <pose>1.500 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -881,7 +830,7 @@
       </link>
     </model>
 
-    <model name="v_51">
+    <model name="v_48">
       <static>true</static>
       <pose>1.500 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -898,7 +847,7 @@
       </link>
     </model>
 
-    <model name="v_52">
+    <model name="v_49">
       <static>true</static>
       <pose>2.000 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -915,7 +864,7 @@
       </link>
     </model>
 
-    <model name="v_53">
+    <model name="v_50">
       <static>true</static>
       <pose>2.000 0.750 0.100 0 0 0</pose>
       <link name="link">
@@ -932,7 +881,7 @@
       </link>
     </model>
 
-    <model name="v_54">
+    <model name="v_51">
       <static>true</static>
       <pose>2.000 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -949,7 +898,7 @@
       </link>
     </model>
 
-    <model name="v_55">
+    <model name="v_52">
       <static>true</static>
       <pose>2.000 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -966,7 +915,7 @@
       </link>
     </model>
 
-    <model name="v_56">
+    <model name="v_53">
       <static>true</static>
       <pose>2.000 2.750 0.100 0 0 0</pose>
       <link name="link">
@@ -983,7 +932,7 @@
       </link>
     </model>
 
-    <model name="v_57">
+    <model name="v_54">
       <static>true</static>
       <pose>2.000 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1000,7 +949,7 @@
       </link>
     </model>
 
-    <model name="v_58">
+    <model name="v_55">
       <static>true</static>
       <pose>2.500 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1017,7 +966,7 @@
       </link>
     </model>
 
-    <model name="v_59">
+    <model name="v_56">
       <static>true</static>
       <pose>2.500 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1034,7 +983,7 @@
       </link>
     </model>
 
-    <model name="v_60">
+    <model name="v_57">
       <static>true</static>
       <pose>2.500 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1051,7 +1000,7 @@
       </link>
     </model>
 
-    <model name="v_61">
+    <model name="v_58">
       <static>true</static>
       <pose>3.000 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1068,7 +1017,7 @@
       </link>
     </model>
 
-    <model name="v_62">
+    <model name="v_59">
       <static>true</static>
       <pose>3.000 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1085,7 +1034,7 @@
       </link>
     </model>
 
-    <model name="v_63">
+    <model name="v_60">
       <static>true</static>
       <pose>3.000 1.750 0.100 0 0 0</pose>
       <link name="link">
@@ -1102,7 +1051,7 @@
       </link>
     </model>
 
-    <model name="v_64">
+    <model name="v_61">
       <static>true</static>
       <pose>3.000 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1119,7 +1068,7 @@
       </link>
     </model>
 
-    <model name="v_65">
+    <model name="v_62">
       <static>true</static>
       <pose>3.000 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1136,7 +1085,7 @@
       </link>
     </model>
 
-    <model name="v_66">
+    <model name="v_63">
       <static>true</static>
       <pose>3.500 0.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1153,7 +1102,7 @@
       </link>
     </model>
 
-    <model name="v_67">
+    <model name="v_64">
       <static>true</static>
       <pose>3.500 0.750 0.100 0 0 0</pose>
       <link name="link">
@@ -1170,7 +1119,7 @@
       </link>
     </model>
 
-    <model name="v_68">
+    <model name="v_65">
       <static>true</static>
       <pose>3.500 1.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1187,7 +1136,7 @@
       </link>
     </model>
 
-    <model name="v_69">
+    <model name="v_66">
       <static>true</static>
       <pose>3.500 1.750 0.100 0 0 0</pose>
       <link name="link">
@@ -1204,7 +1153,7 @@
       </link>
     </model>
 
-    <model name="v_70">
+    <model name="v_67">
       <static>true</static>
       <pose>3.500 2.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1221,7 +1170,7 @@
       </link>
     </model>
 
-    <model name="v_71">
+    <model name="v_68">
       <static>true</static>
       <pose>3.500 2.750 0.100 0 0 0</pose>
       <link name="link">
@@ -1238,7 +1187,7 @@
       </link>
     </model>
 
-    <model name="v_72">
+    <model name="v_69">
       <static>true</static>
       <pose>3.500 3.250 0.100 0 0 0</pose>
       <link name="link">
@@ -1263,10 +1212,10 @@
           <mass>0.05</mass>
           <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.02 0.03 0.2</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.05 0.05 0.22</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>1.0 0.0 0.0 1</ambient><diffuse>1.0 0.0 0.0 1</diffuse></material>
-          <geometry><box><size>0.02 0.03 0.2</size></box></geometry>
+          <geometry><box><size>0.05 0.05 0.22</size></box></geometry>
         </visual>
       </link>
     </model>
@@ -1279,10 +1228,10 @@
           <mass>0.05</mass>
           <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.02 0.03 0.2</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.05 0.05 0.22</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>0.0 0.0 1.0 1</ambient><diffuse>0.0 0.0 1.0 1</diffuse></material>
-          <geometry><box><size>0.02 0.03 0.2</size></box></geometry>
+          <geometry><box><size>0.05 0.05 0.22</size></box></geometry>
         </visual>
       </link>
     </model>
