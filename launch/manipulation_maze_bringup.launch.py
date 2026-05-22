@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Gazebo bringup for TurtleBot3 manipulation in the maze world.
 
-Same as upstream ``base.launch.py`` + ``gazebo.launch.py``, but:
-  - uses ``turtlebot3_maze`` controller yaml (includes diff_drive_controller)
-  - always spawns diff_drive_controller in simulation
+Controller spawners start only AFTER the robot is spawned in Gazebo (so
+gazebo_ros2_control creates /controller_manager first).
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+    TimerAction,
+)
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
@@ -103,10 +107,18 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
-    after_joint_state = RegisterEventHandler(
+    # Spawn robot after Gazebo is up, then load all controllers in parallel.
+    delayed_spawn = TimerAction(period=4.0, actions=[spawn_robot])
+    load_controllers = RegisterEventHandler(
         OnProcessExit(
-            target_action=joint_state_spawner,
-            on_exit=[diff_drive_spawner, imu_spawner, arm_spawner, gripper_spawner],
+            target_action=spawn_robot,
+            on_exit=[
+                joint_state_spawner,
+                diff_drive_spawner,
+                imu_spawner,
+                arm_spawner,
+                gripper_spawner,
+            ],
         )
     )
 
@@ -118,10 +130,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("y_pose", default_value="0.25"),
         DeclareLaunchArgument("z_pose", default_value="0.01"),
         DeclareLaunchArgument("yaw", default_value="1.5708"),
-        robot_state_pub,
-        joint_state_spawner,
-        after_joint_state,
         gzserver,
         gzclient,
-        spawn_robot,
+        robot_state_pub,
+        delayed_spawn,
+        load_controllers,
     ])

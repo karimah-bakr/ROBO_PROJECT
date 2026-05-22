@@ -134,6 +134,6 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("rviz", default_value="false"),
         *set_model_path,
         manip_bringup,
-        TimerAction(period=14.0, actions=[lidar, mapper, planner, arm, navigator]),
+        TimerAction(period=20.0, actions=[lidar, mapper, planner, arm, navigator]),
         rviz,
     ])
