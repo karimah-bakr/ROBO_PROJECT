@@ -75,6 +75,8 @@ standalone_navigator:
     # Stop one cell before object cell; face into objects to pick.
     pick_approach_cell: [5, 2]
     pick_face_heading: "W"
+    # After reaching approach cell, creep this far toward object cell (0.25 = half cell).
+    pick_creep_m: 0.25
 
 manipulator_controller:
   ros__parameters:

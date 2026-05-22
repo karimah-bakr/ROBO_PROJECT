@@ -174,6 +174,18 @@ def dist_to_cell_center(x: float, y: float, cell: Tuple[int, int]) -> float:
     return math.hypot(x - cx, y - cy)
 
 
+def direction_between(
+    src: Tuple[int, int], dst: Tuple[int, int],
+) -> Optional[str]:
+    """Cardinal step from *src* to adjacent *dst*, or None."""
+    dr = dst[0] - src[0]
+    dc = dst[1] - src[1]
+    for d in "NESW":
+        if dr == DR[d] and dc == DC[d]:
+            return d
+    return None
+
+
 def wrap(a: float) -> float:
     while a >  math.pi: a -= 2.0 * math.pi
     while a < -math.pi: a += 2.0 * math.pi
@@ -204,11 +216,15 @@ class MazeMissionNavigator(Node):
         self.declare_parameter("goal_lidar_bypass_m", self.GOAL_LIDAR_BYPASS)
         self.declare_parameter("pick_approach_cell", [5, 2])
         self.declare_parameter("pick_face_heading", PICK_FACE)
+        self.declare_parameter("pick_creep_m", CELL * 0.5)
         self.goal_arrival_tol = float(self.get_parameter("goal_arrival_tol_m").value)
         self.goal_lidar_bypass = float(self.get_parameter("goal_lidar_bypass_m").value)
         ap = self.get_parameter("pick_approach_cell").value
         self.pick_approach = (int(ap[0]), int(ap[1]))
         self.pick_face = str(self.get_parameter("pick_face_heading").value)
+        self.pick_creep_m = float(self.get_parameter("pick_creep_m").value)
+        self._pick_creep_done = False
+        self._pick_creep_script_i = -1
 
         # Gazebo publishes /odom as reliable; /scan as sensor (best effort).
         odom_qos = QoSProfile(
@@ -279,8 +295,8 @@ class MazeMissionNavigator(Node):
         self.get_logger().info(
             f"standalone_navigator ready: "
             f"start={START_CELL} object={OBJECT_CELL} "
-            f"pick_approach={self.pick_approach} face={self.pick_face} "
-            f"target={TARGET_CELL}"
+            f"pick_approach={self.pick_approach} creep={self.pick_creep_m:.2f}m "
+            f"face={self.pick_face} target={TARGET_CELL}"
         )
 
     def _at_goal_cell(self, goal: Tuple[int, int]) -> bool:
@@ -317,6 +333,35 @@ class MazeMissionNavigator(Node):
 
     def _arm_joint1(self) -> float:
         return YAW[self.heading]
+
+    def _pick_creep_heading(self) -> str:
+        d = direction_between(self.pick_approach, OBJECT_CELL)
+        return d if d is not None else self.pick_face
+
+    def _start_pick_creep(self) -> None:
+        creep_h = self._pick_creep_heading()
+        if self.heading != creep_h:
+            self.get_logger().info(
+                f"pick creep: turn {self.heading} -> {creep_h}"
+            )
+            self.motion = {
+                "type": "turn",
+                "target_yaw": YAW[creep_h],
+                "next_heading": creep_h,
+            }
+            return
+        self.get_logger().info(
+            f"pick creep: forward {self.pick_creep_m:.2f}m "
+            f"toward {OBJECT_CELL}"
+        )
+        self.motion = {
+            "type": "forward",
+            "start_x": self.x,
+            "start_y": self.y,
+            "target": self.pick_creep_m,
+            "pick_creep": True,
+            "goal_cell": OBJECT_CELL,
+        }
 
     def _heartbeat(self) -> None:
         kind = self.script[self.script_i][0] if self.script_i < len(self.script) else "idle"
@@ -449,6 +494,9 @@ class MazeMissionNavigator(Node):
             return
 
         if kind == "pick":
+            if self._pick_creep_script_i != self.script_i:
+                self._pick_creep_script_i = self.script_i
+                self._pick_creep_done = False
             ox, oy = cell_center(OBJECT_CELL)
             self._arm_step(
                 "pick",
@@ -566,6 +614,13 @@ class MazeMissionNavigator(Node):
 
         # forward
         if m.get("aborted"):
+            if m.get("pick_creep"):
+                if dist_to_cell_center(self.x, self.y, OBJECT_CELL) < self.goal_lidar_bypass:
+                    self._pick_creep_done = True
+                    self.get_logger().info(
+                        "pick creep aborted near object — proceeding to PICK"
+                    )
+                    return
             goal_cell = m.get("goal_cell")
             if goal_cell is not None and self._at_goal_cell(goal_cell):
                 self.get_logger().info(
@@ -585,6 +640,14 @@ class MazeMissionNavigator(Node):
             self.step_queue.clear()
             return
 
+        if m.get("pick_creep"):
+            self._pick_creep_done = True
+            self.get_logger().info(
+                f"pick creep complete ({self.pick_creep_m:.2f}m), "
+                f"pos=({self.x:.2f},{self.y:.2f})"
+            )
+            return
+
         # Consumed one step successfully.
         self.cell = m["next_cell"]
         self.step_queue.pop(0)
@@ -597,14 +660,15 @@ class MazeMissionNavigator(Node):
         payload: dict,
         face: Optional[str] = None,
     ) -> None:
-        if face and self.heading != face:
+        creep_h = self._pick_creep_heading() if label == "pick" else face
+        if creep_h and self.heading != creep_h:
             self.get_logger().info(
-                f"{label}: align heading {self.heading} -> {face} for arm reach"
+                f"{label}: align heading {self.heading} -> {creep_h} for arm reach"
             )
             self.motion = {
                 "type": "turn",
-                "target_yaw": YAW[face],
-                "next_heading": face,
+                "target_yaw": YAW[creep_h],
+                "next_heading": creep_h,
             }
             return
         if self.cell != must_be_at and not self._at_goal_cell(must_be_at):
@@ -618,6 +682,9 @@ class MazeMissionNavigator(Node):
                 return
             self._goto_goal = must_be_at
             self.step_queue = cells_to_steps(cells)
+            return
+        if label == "pick" and not self._pick_creep_done:
+            self._start_pick_creep()
             return
         self.cell = self._nearest_reachable_cell(world_to_cell(self.x, self.y))
         if self.arm_busy:
