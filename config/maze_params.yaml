@@ -34,8 +34,8 @@ maze_navigator:
 lidar_processor:
   ros__parameters:
     # Sector definitions (deg, inclusive lower / exclusive upper)
-    front_min_deg: -30.0
-    front_max_deg:  30.0
+    front_min_deg: -35.0
+    front_max_deg:  35.0
     right_min_deg:  60.0
     right_max_deg: 120.0
     back_min_deg: 150.0
@@ -50,9 +50,9 @@ lidar_processor:
     # Object detection (matches 2cm x 20cm cube profile)
     object_cluster_min_points: 2
     object_cluster_max_points: 10
-    object_cluster_max_width_m: 0.06
+    object_cluster_max_width_m: 0.08
     object_min_distance_m: 0.08
-    object_max_distance_m: 0.45
+    object_max_distance_m: 0.50
 
 grid_mapper:
   ros__parameters:
@@ -77,6 +77,10 @@ standalone_navigator:
     pick_face_heading: "W"
     # After reaching approach cell, creep this far toward object cell (0.25 = half cell).
     pick_creep_m: 0.25
+    # Wait for /object_detected in range before PICK (fallback after timeout).
+    pick_wait_object_s: 2.0
+    pick_object_min_m: 0.10
+    pick_object_max_m: 0.38
 
 manipulator_controller:
   ros__parameters:
@@ -88,5 +92,6 @@ manipulator_controller:
     gripper_open:    0.044
     gripper_close:   0.010
     step_wait_s:     1.5
+    joint1_align_wait_s: 2.5
     require_gazebo_teleport: true
     gazebo_service_wait_s: 15.0

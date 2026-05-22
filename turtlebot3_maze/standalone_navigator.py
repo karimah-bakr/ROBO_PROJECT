@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
@@ -217,14 +218,23 @@ class MazeMissionNavigator(Node):
         self.declare_parameter("pick_approach_cell", [5, 2])
         self.declare_parameter("pick_face_heading", PICK_FACE)
         self.declare_parameter("pick_creep_m", CELL * 0.5)
+        self.declare_parameter("pick_wait_object_s", 2.0)
+        self.declare_parameter("pick_object_min_m", 0.10)
+        self.declare_parameter("pick_object_max_m", 0.38)
         self.goal_arrival_tol = float(self.get_parameter("goal_arrival_tol_m").value)
         self.goal_lidar_bypass = float(self.get_parameter("goal_lidar_bypass_m").value)
         ap = self.get_parameter("pick_approach_cell").value
         self.pick_approach = (int(ap[0]), int(ap[1]))
         self.pick_face = str(self.get_parameter("pick_face_heading").value)
         self.pick_creep_m = float(self.get_parameter("pick_creep_m").value)
+        self.pick_wait_object_s = float(self.get_parameter("pick_wait_object_s").value)
+        self.pick_object_min_m = float(self.get_parameter("pick_object_min_m").value)
+        self.pick_object_max_m = float(self.get_parameter("pick_object_max_m").value)
         self._pick_creep_done = False
         self._pick_creep_script_i = -1
+        self._pick_object_wait_done = False
+        self._pick_object_wait_start: Optional[float] = None
+        self._last_object_det: Optional[dict] = None
 
         # Gazebo publishes /odom as reliable; /scan as sensor (best effort).
         odom_qos = QoSProfile(
@@ -241,6 +251,7 @@ class MazeMissionNavigator(Node):
         self.create_subscription(Odometry,  "/odom", self._on_odom, odom_qos)
         self.create_subscription(LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(String,    "/arm_status", self._on_arm,    10)
+        self.create_subscription(String,    "/object_detected", self._on_object, 10)
 
         # odom state
         self.have_odom = False
@@ -333,6 +344,46 @@ class MazeMissionNavigator(Node):
 
     def _arm_joint1(self) -> float:
         return YAW[self.heading]
+
+    def _on_object(self, msg: String) -> None:
+        try:
+            self._last_object_det = json.loads(msg.data)
+        except (ValueError, TypeError):
+            pass
+
+    def _object_in_pick_range(self) -> bool:
+        if not self._last_object_det:
+            return False
+        try:
+            dist = float(self._last_object_det["distance_m"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        return self.pick_object_min_m <= dist <= self.pick_object_max_m
+
+    def _wait_for_object_before_pick(self) -> bool:
+        """Return True when ready to send PICK (detected or timeout)."""
+        if self._pick_object_wait_done:
+            return True
+        if self._pick_object_wait_start is None:
+            self._pick_object_wait_start = time.monotonic()
+            self.get_logger().info(
+                f"waiting for object in "
+                f"[{self.pick_object_min_m:.2f}, {self.pick_object_max_m:.2f}]m "
+                f"(max {self.pick_wait_object_s:.1f}s)"
+            )
+        if self._object_in_pick_range():
+            det = self._last_object_det or {}
+            self.get_logger().info(
+                f"object detected: dist={det.get('distance_m')} "
+                f"angle={det.get('angle_deg')}"
+            )
+            self._pick_object_wait_done = True
+            return True
+        if time.monotonic() - self._pick_object_wait_start >= self.pick_wait_object_s:
+            self.get_logger().warn("object not detected in time — PICK anyway")
+            self._pick_object_wait_done = True
+            return True
+        return False
 
     def _pick_creep_heading(self) -> str:
         d = direction_between(self.pick_approach, OBJECT_CELL)
@@ -497,6 +548,8 @@ class MazeMissionNavigator(Node):
             if self._pick_creep_script_i != self.script_i:
                 self._pick_creep_script_i = self.script_i
                 self._pick_creep_done = False
+                self._pick_object_wait_done = False
+                self._pick_object_wait_start = None
             ox, oy = cell_center(OBJECT_CELL)
             self._arm_step(
                 "pick",
@@ -685,6 +738,8 @@ class MazeMissionNavigator(Node):
             return
         if label == "pick" and not self._pick_creep_done:
             self._start_pick_creep()
+            return
+        if label == "pick" and not self._wait_for_object_before_pick():
             return
         self.cell = self._nearest_reachable_cell(world_to_cell(self.x, self.y))
         if self.arm_busy:
