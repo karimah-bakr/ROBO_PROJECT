@@ -65,10 +65,6 @@ path_planner:
     rows: 7
     cols: 7
 
-standalone_navigator:
-  ros__parameters:
-    use_sim_time: true
-
 manipulator_controller:
   ros__parameters:
     # OpenManipulator-X joint goals (radians) for each pose.
@@ -78,4 +74,4 @@ manipulator_controller:
     carry_joints:    [0.0, -0.90,  0.30,  0.60]
     gripper_open:    0.044
     gripper_close:   0.010
-    step_wait_s:     1.0   # shorter waits in Gazebo stub mode
+    step_wait_s:     2.0
