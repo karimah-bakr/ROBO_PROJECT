@@ -67,9 +67,9 @@ class ManipulatorControllerNode(Node):
         super().__init__("manipulator_controller")
 
         self.declare_parameter("home_joints",  [0.0, -1.05,  0.35,  0.70])
-        self.declare_parameter("reach_joints", [0.0, -0.35,  0.25, -0.55])
-        self.declare_parameter("lower_joints", [0.0, -0.85,  0.15, -0.65])
-        self.declare_parameter("carry_joints", [0.0, -0.95,  0.25,  0.55])
+        self.declare_parameter("reach_joints", [0.3,  0.50, -0.20,  0.00])
+        self.declare_parameter("lower_joints", [0.3,  0.55, -0.30,  0.00])
+        self.declare_parameter("carry_joints", [0.3, -0.95,  0.25,  0.55])
         self.declare_parameter("gripper_open",  0.044)
         self.declare_parameter("gripper_close", 0.010)
         self.declare_parameter("step_wait_s",   1.5)
