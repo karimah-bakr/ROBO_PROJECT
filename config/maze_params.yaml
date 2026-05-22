@@ -88,5 +88,9 @@ manipulator_controller:
     gripper_open:    0.044
     gripper_close:   0.010
     step_wait_s:     1.5
+    # Slower path_time used when rotating joint1 alone before reach,
+    # so the base swing from home (j1=0) to heading yaw (±π/2 or π)
+    # stays within joint velocity limits.
+    joint1_align_wait_s: 2.5
     require_gazebo_teleport: true
     gazebo_service_wait_s: 15.0
