@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
@@ -165,7 +166,10 @@ class MazeMissionNavigator(Node):
     FRONT_SAFETY   = 0.12   # m -- abort forward if front sector < this
     FRONT_SLOW     = 0.22   # m -- start slowing down below this
     SCAN_FRONT_DEG = 15.0   # ± window around 0° for the safety check
-    MIN_FWD_BEFORE_LIDAR_ABORT = 0.08
+    SCAN_MIN_RANGE = 0.12   # ignore closer returns (arm / noise)
+    MIN_FWD_BEFORE_LIDAR_ABORT = 0.22  # must drive ~half a cell before lidar can abort
+    SENSOR_WARMUP_ODOM = 3
+    SENSOR_WARMUP_SCAN = 3
 
     def __init__(self) -> None:
         super().__init__("maze_mission_navigator")
@@ -230,6 +234,11 @@ class MazeMissionNavigator(Node):
         self._waiting_logged = False
         self._scan_count = 0
         self._odom_count = 0
+        self._cell_synced = False
+        self._ignore_lidar_once = False
+        self._lidar_disabled_until = 0.0
+        self._stall_replans = 0
+        self._last_plan_key: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
 
         self.create_timer(0.05, self._tick)
         self.create_timer(2.0, self._heartbeat)
@@ -242,12 +251,44 @@ class MazeMissionNavigator(Node):
         cx, cy = cell_center(cell)
         return math.hypot(self.x - cx, self.y - cy) < self.CELL_ARRIVE_TOL_M
 
+    def _sensors_ready(self) -> bool:
+        return (
+            self._odom_count >= self.SENSOR_WARMUP_ODOM
+            and self._scan_count >= self.SENSOR_WARMUP_SCAN
+        )
+
+    def _lidar_active(self) -> bool:
+        return time.monotonic() >= self._lidar_disabled_until
+
+    def _sync_cell_from_odom(self) -> None:
+        best = self.cell
+        best_d = float("inf")
+        for r in range(1, ROWS + 1):
+            for c in range(1, COLS + 1):
+                cx, cy = cell_center((r, c))
+                d = math.hypot(self.x - cx, self.y - cy)
+                if d < best_d:
+                    best_d = d
+                    best = (r, c)
+        if best_d < CELL * 0.55:
+            if best != self.cell:
+                self.get_logger().info(
+                    f"odom sync: grid {self.cell} -> {best} "
+                    f"(dist={best_d:.2f}m pos=({self.x:.2f},{self.y:.2f}))"
+                )
+            self.cell = best
+
     def _heartbeat(self) -> None:
         kind = self.script[self.script_i][0] if self.script_i < len(self.script) else "idle"
+        front = (
+            f"{self.front_dist:.2f}m"
+            if math.isfinite(self.front_dist)
+            else "inf"
+        )
         self.get_logger().info(
             f"hb: cell={self.cell} heading={self.heading} step={kind} "
-            f"odom={self._odom_count} scan={self._scan_count} "
-            f"front={self.front_dist:.2f}m"
+            f"odom={self._odom_count} scan={self._scan_count} front={front} "
+            f"queue={len(self.step_queue)} motion={self.motion is not None}"
         )
 
     # -------------------------------------------------------------------------
@@ -264,6 +305,9 @@ class MazeMissionNavigator(Node):
         self.yaw = math.atan2(siny, cosy)
         self.have_odom = True
         self._odom_count += 1
+        if not self._cell_synced and self._odom_count >= self.SENSOR_WARMUP_ODOM:
+            self._sync_cell_from_odom()
+            self._cell_synced = True
 
     def _on_scan(self, msg: LaserScan) -> None:
         self._scan_count += 1
@@ -274,12 +318,13 @@ class MazeMissionNavigator(Node):
         half = math.radians(self.SCAN_FRONT_DEG)
         rmin = float("inf")
         for i, r in enumerate(msg.ranges):
-            if not math.isfinite(r) or r < 0.06:
+            if not math.isfinite(r) or r < self.SCAN_MIN_RANGE:
                 continue
             ang = wrap(msg.angle_min + i * msg.angle_increment)
             if -half <= ang <= half and r < rmin:
                 rmin = r
-        self.front_dist = rmin
+        if math.isfinite(rmin):
+            self.front_dist = rmin
 
     def _on_arm(self, msg: String) -> None:
         try:
@@ -307,6 +352,15 @@ class MazeMissionNavigator(Node):
                 self.get_logger().info("waiting for /odom...")
                 self._waiting_logged = True
             return
+        if not self._sensors_ready():
+            if not self._waiting_logged:
+                self.get_logger().info(
+                    f"waiting for sensors (odom={self._odom_count}, "
+                    f"scan={self._scan_count})..."
+                )
+                self._waiting_logged = True
+            return
+        self._waiting_logged = False
 
         # 1) drive any active low-level motion
         if self.motion is not None:
@@ -335,16 +389,31 @@ class MazeMissionNavigator(Node):
         if kind == "goto":
             goal = payload  # type: ignore[assignment]
             assert isinstance(goal, tuple)
-            if self.cell == goal or self._near_cell(goal):
+            if self.cell == goal or (
+                self._cell_synced and self._near_cell(goal)
+            ):
                 self.cell = goal
                 self.get_logger().info(f"arrived at cell {goal}")
                 self.script_i += 1
+                self._stall_replans = 0
                 return
             cells = bfs(self.cell, goal)
             if not cells:
                 self.get_logger().error(f"no path {self.cell} -> {goal}; aborting")
                 self.script_i = len(self.script)
                 return
+            plan_key = (self.cell, goal)
+            if plan_key == self._last_plan_key:
+                self._stall_replans += 1
+            else:
+                self._stall_replans = 0
+            self._last_plan_key = plan_key
+            if self._stall_replans >= 4:
+                self.get_logger().warn(
+                    "navigation replan loop; disabling lidar safety for 6s"
+                )
+                self._lidar_disabled_until = time.monotonic() + 6.0
+                self._stall_replans = 0
             steps = cells_to_steps(cells)
             self.get_logger().info(
                 f"plan {self.cell}->{goal}: {len(steps)} steps via {cells}"
@@ -418,7 +487,12 @@ class MazeMissionNavigator(Node):
             self._stop()
             return True
 
-        if dist >= self.MIN_FWD_BEFORE_LIDAR_ABORT and self.front_dist < self.FRONT_SAFETY:
+        if (
+            self._lidar_active()
+            and not self._ignore_lidar_once
+            and dist >= self.MIN_FWD_BEFORE_LIDAR_ABORT
+            and self.front_dist < self.FRONT_SAFETY
+        ):
             self.get_logger().warn(
                 f"front={self.front_dist:.2f}m < safety {self.FRONT_SAFETY:.2f}m; "
                 f"aborting forward at dist={dist:.2f}m"
@@ -457,11 +531,26 @@ class MazeMissionNavigator(Node):
             if dist >= CELL * 0.65:
                 self.cell = m["next_cell"]
                 self.step_queue.pop(0)
+                self._ignore_lidar_once = False
                 self.get_logger().warn(
                     f"forward partial ({dist:.2f}m) -> snapped to cell {self.cell}"
                 )
                 return
-            self.get_logger().warn("forward aborted early; re-planning")
+            if not self._ignore_lidar_once:
+                self._ignore_lidar_once = True
+                self.get_logger().warn(
+                    f"forward aborted early at {dist:.2f}m; retry without lidar"
+                )
+                self.motion = {
+                    "type": "forward",
+                    "start_x": self.x,
+                    "start_y": self.y,
+                    "target": CELL - dist,
+                    "next_cell": m["next_cell"],
+                }
+                return
+            self._ignore_lidar_once = False
+            self.get_logger().warn("forward aborted twice; re-planning")
             self.step_queue.clear()
             return
 
