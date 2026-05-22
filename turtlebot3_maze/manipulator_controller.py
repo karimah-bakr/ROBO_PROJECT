@@ -67,13 +67,12 @@ class ManipulatorControllerNode(Node):
         super().__init__("manipulator_controller")
 
         self.declare_parameter("home_joints",  [0.0, -1.05,  0.35,  0.70])
-        self.declare_parameter("reach_joints", [0.3,  0.50, -0.20,  0.00])
-        self.declare_parameter("lower_joints", [0.3,  0.55, -0.30,  0.00])
-        self.declare_parameter("carry_joints", [0.3, -0.95,  0.25,  0.55])
+        self.declare_parameter("reach_joints", [0.0, -0.35,  0.25, -0.55])
+        self.declare_parameter("lower_joints", [0.0, -0.85,  0.15, -0.65])
+        self.declare_parameter("carry_joints", [0.0, -0.95,  0.25,  0.55])
         self.declare_parameter("gripper_open",  0.044)
         self.declare_parameter("gripper_close", 0.010)
         self.declare_parameter("step_wait_s",   1.5)
-        self.declare_parameter("joint1_align_wait_s", 2.5)
         self.declare_parameter("require_gazebo_teleport", True)
         self.declare_parameter("gazebo_service_wait_s", 15.0)
 
@@ -84,7 +83,6 @@ class ManipulatorControllerNode(Node):
         self.g_open = float(self.get_parameter("gripper_open").value)
         self.g_close = float(self.get_parameter("gripper_close").value)
         self.step_wait = float(self.get_parameter("step_wait_s").value)
-        self.joint1_align_wait = float(self.get_parameter("joint1_align_wait_s").value)
         self.require_tp = bool(self.get_parameter("require_gazebo_teleport").value)
         self._gz_wait = float(self.get_parameter("gazebo_service_wait_s").value)
 
@@ -204,13 +202,6 @@ class ManipulatorControllerNode(Node):
             pose[0] = float(joint1)
         return pose
 
-    def _align_joint1(self, joint1: float) -> bool:
-        """Rotate base joint only while holding home on joints 2–4."""
-        pose = [float(joint1), self.home[1], self.home[2], self.home[3]]
-        return self._send_joints(
-            pose, "align joint1", path_time=self.joint1_align_wait,
-        )
-
     def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
         self.get_logger().info("PICK started")
         if self._next_object_idx >= len(OBJECT_NAMES):
@@ -225,8 +216,6 @@ class ManipulatorControllerNode(Node):
         carry = self._with_joint1(self.carry, j1)
 
         arm_ok = True
-        if j1 is not None and abs(float(j1) - self.home[0]) > 0.15:
-            arm_ok &= self._align_joint1(float(j1))
         arm_ok &= self._send_gripper(self.g_open, "open gripper")
         arm_ok &= self._send_joints(reach, "reach")
         arm_ok &= self._send_joints(lower, "lower")
@@ -248,8 +237,6 @@ class ManipulatorControllerNode(Node):
         lower = self._with_joint1(self.lower, j1)
 
         arm_ok = True
-        if j1 is not None and abs(float(j1) - self.home[0]) > 0.15:
-            arm_ok &= self._align_joint1(float(j1))
         arm_ok &= self._send_joints(reach, "reach over target")
         arm_ok &= self._send_joints(lower, "lower")
         arm_ok &= self._send_gripper(self.g_open, "release")
@@ -319,31 +306,23 @@ class ManipulatorControllerNode(Node):
             )
         return ok
 
-    def _send_joints(
-        self,
-        positions: List[float],
-        label: str,
-        path_time: Optional[float] = None,
-    ) -> bool:
-        t_move = self.step_wait if path_time is None else float(path_time)
-        self.get_logger().info(f"joints {label}: {positions} ({t_move:.1f}s)")
+    def _send_joints(self, positions: List[float], label: str) -> bool:
+        self.get_logger().info(f"joints {label}: {positions}")
         if HAVE_OM and self._joint_cli and self._joint_cli.wait_for_service(timeout_sec=1.0):
             req = SetJointPosition.Request()
             req.planning_group = "arm"
             req.joint_position.joint_name = list(JOINT_NAMES)
             req.joint_position.position = list(positions)
-            req.path_time = t_move
+            req.path_time = self.step_wait
             return self._await_future(
-                self._joint_cli.call_async(req), t_move + 2.0, label
+                self._joint_cli.call_async(req), self.step_wait + 2.0, label
             )
         if self._arm_action and self._arm_action.wait_for_server(timeout_sec=1.0):
             traj = JointTrajectory()
             traj.joint_names = list(JOINT_NAMES)
             pt = JointTrajectoryPoint()
             pt.positions = list(positions)
-            sec = int(t_move)
-            nsec = int((t_move - sec) * 1e9)
-            pt.time_from_start = Duration(sec=sec, nanosec=nsec)
+            pt.time_from_start = Duration(sec=int(self.step_wait), nanosec=0)
             traj.points = [pt]
             goal = FollowJointTrajectory.Goal()
             goal.trajectory = traj
@@ -354,9 +333,9 @@ class ManipulatorControllerNode(Node):
             if handle is None or not handle.accepted:
                 return False
             return self._await_future(
-                handle.get_result_async(), t_move + 2.0, label
+                handle.get_result_async(), self.step_wait + 2.0, label
             )
-        time.sleep(t_move)
+        time.sleep(self.step_wait)
         return True
 
     def _send_gripper(self, position: float, label: str) -> bool:
