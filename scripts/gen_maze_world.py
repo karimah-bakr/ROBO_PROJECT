@@ -39,7 +39,7 @@ N = 7
 #   v[x][y] = vertical   wall on the west  edge of column (x+1), row (y+1).
 H_WALLS = [
     [1, 1, 1, 1, 1, 1, 1],  # y=0  south boundary
-    [0, 0, 1, 0, 1, 0, 0],  # y=1
+    [0, 0, 0, 0, 1, 0, 0],  # y=1  (col 3 opened: start cell (1,3) needs a north exit)
     [1, 0, 1, 0, 1, 0, 1],
     [1, 0, 0, 0, 1, 0, 1],
     [1, 1, 1, 0, 1, 1, 1],

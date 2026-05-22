@@ -31,6 +31,7 @@ setup(
             'grid_mapper = turtlebot3_maze.grid_mapper:main',
             'path_planner = turtlebot3_maze.path_planner:main',
             'manipulator_controller = turtlebot3_maze.manipulator_controller:main',
+            'standalone_navigator = turtlebot3_maze.standalone_navigator:main',
         ],
     },
 )

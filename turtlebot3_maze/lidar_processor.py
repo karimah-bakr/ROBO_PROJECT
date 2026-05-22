@@ -27,7 +27,7 @@ from typing import Dict, List, Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
@@ -80,12 +80,9 @@ class LidarProcessorNode(Node):
         self.obj_max_dist = p("object_max_distance_m")
 
         # --- I/O ---
-        sensor_qos = QoSProfile(
-            depth=10,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
+        self.scan_sub = self.create_subscription(
+            LaserScan, "/scan", self._on_scan, qos_profile_sensor_data
         )
-        self.scan_sub = self.create_subscription(LaserScan, "/scan", self._on_scan, sensor_qos)
         self.wall_pub = self.create_publisher(String, "/wall_status", 10)
         self.obj_pub = self.create_publisher(String, "/object_detected", 10)
 

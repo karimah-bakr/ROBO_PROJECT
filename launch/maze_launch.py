@@ -11,7 +11,10 @@ Order:
   8. maze_navigator  (the FSM)
 
 Required environment:
-    export TURTLEBOT3_MODEL=waffle_pi   # or "waffle" / "burger"
+    export TURTLEBOT3_MODEL=burger        # or waffle / waffle_pi
+
+Install on the workstation:
+    sudo apt install ros-humble-turtlebot3-gazebo ros-humble-turtlebot3-description
 
 Override params at launch time:
     ros2 launch turtlebot3_maze maze_launch.py start_cell:=[1,3] target_cell:=[1,7]
@@ -22,6 +25,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
+    AppendEnvironmentVariable,
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
@@ -58,11 +62,25 @@ def generate_launch_description() -> LaunchDescription:
         PythonLaunchDescriptionSource(os.path.join(gazebo_ros, "launch", "gzclient.launch.py")),
     )
 
-    # 2) robot_state_publisher (inline — avoids missing namespace in bringup launch).
-    # Spec calls for a TurtleBot3 with manipulator — default to waffle_pi
-    # (the model the OpenManipulator-X is normally mounted on). Override with
-    # `export TURTLEBOT3_MODEL=waffle` if you need the plain Waffle.
-    model = os.environ.get("TURTLEBOT3_MODEL", "waffle_pi")
+    # 2) TurtleBot3 model — MUST use turtlebot3_gazebo SDF (has /odom + /scan plugins).
+    # Spawning plain URDF from turtlebot3_description gives a static shell with no sensors.
+    model = os.environ.get("TURTLEBOT3_MODEL", "burger")
+    tb3_gazebo = get_package_share_directory("turtlebot3_gazebo")
+    model_path = os.path.join(tb3_gazebo, "models", f"turtlebot3_{model}", "model.sdf")
+    if not os.path.isfile(model_path):
+        raise FileNotFoundError(
+            f"TurtleBot3 Gazebo model not found: {model_path}\n"
+            "Install: sudo apt install ros-humble-turtlebot3-gazebo\n"
+            f"And set: export TURTLEBOT3_MODEL=burger  (you have: {model})"
+        )
+
+    gazebo_models_path = os.path.join(tb3_gazebo, "models")
+    set_gazebo_model_path = AppendEnvironmentVariable(
+        "GAZEBO_MODEL_PATH",
+        gazebo_models_path,
+        prepend=True,
+    )
+
     urdf_path = os.path.join(
         get_package_share_directory("turtlebot3_description"),
         "urdf",
@@ -78,12 +96,12 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # 3) Spawn the TurtleBot3 (Waffle Pi by default) at the start cell.
+    # 3) Spawn TurtleBot3 with Gazebo plugins (diff drive + LIDAR).
     spawn = ExecuteProcess(
         cmd=[
             "ros2", "run", "gazebo_ros", "spawn_entity.py",
             "-entity", f"turtlebot3_{model}",
-            "-topic", "robot_description",
+            "-file", model_path,
             "-x", spawn_x,
             "-y", spawn_y,
             "-z", "0.01",
@@ -123,14 +141,10 @@ def generate_launch_description() -> LaunchDescription:
     )
     navigator = Node(
         package="turtlebot3_maze",
-        executable="maze_navigator",
-        name="maze_navigator",
+        executable="standalone_navigator",
+        name="standalone_navigator",
         output="screen",
-        parameters=[
-            params_path,
-            use_sim_time,
-            {"start_cell": start_cell, "target_cell": target_cell},
-        ],
+        parameters=[use_sim_time],
     )
 
     rviz = Node(
@@ -151,6 +165,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("target_cell", default_value="[1, 7]"),
         DeclareLaunchArgument("rviz", default_value="false"),
 
+        set_gazebo_model_path,
         gzserver,
         gzclient,
         rsp,
