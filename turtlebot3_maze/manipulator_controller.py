@@ -1,24 +1,16 @@
-"""OpenManipulator-X controller node.
+"""OpenManipulator-X controller for TurtleBot3 manipulation (Gazebo / hardware).
 
-Exposes high-level "pick" / "place" / "home" actions through a simple
-trigger topic and reports completion on /arm_status.
+/arm_command  JSON or plain text:
+    {"cmd": "PICK",  "x": 0.25, "y": 2.25, "z": 0.1}
+    {"cmd": "PLACE", "x": 3.25, "y": 0.25, "z": 0.1}
+    "HOME"
 
-Topic protocol:
-    /arm_command  std_msgs/String      Plain command ("PICK"/"PLACE"/"HOME") OR
-                                       JSON {"cmd": "PLACE", "x": 3.25, "y": 0.25}.
-                                       The optional x/y/z on PLACE tells the node
-                                       where to drop the currently-held object.
-    /arm_status   std_msgs/String JSON {"cmd": "...", "ok": true|false, "reason": "..."}
+/arm_status   {"cmd": "...", "ok": true|false, "reason": "..."}
 
-Internally:
-    - The arm motions go through open_manipulator_msgs/SetJointPosition if the
-      service is up (real hardware / full bringup). Otherwise it's a sleep stub
-      so the FSM can still progress in headless tests.
-    - To make the two-object delivery actually visible in Gazebo, the node
-      teleports the held SDF model via gazebo_msgs/SetEntityState: object_1 on
-      the first PICK and object_2 on the second, "stowed" off-screen while
-      carried and dropped at the place pose. Without gazebo_msgs the teleport
-      step is silently skipped.
+Backends (first match wins):
+  1. open_manipulator_msgs services (legacy bringup)
+  2. ros2_control actions (turtlebot3_manipulation_gazebo)
+  3. timed stub + optional Gazebo object teleport
 """
 
 from __future__ import annotations
@@ -29,30 +21,41 @@ import time
 from typing import List, Optional, Tuple
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from std_msgs.msg import String
 
-
-# Try to import the real service type; fall back to None if absent.
-try:  # pragma: no cover  -- environment dependent
+try:
     from open_manipulator_msgs.srv import SetJointPosition  # type: ignore
     HAVE_OM = True
-except Exception:  # pragma: no cover
+except Exception:
     SetJointPosition = None  # type: ignore
     HAVE_OM = False
 
-try:  # pragma: no cover  -- environment dependent
+try:
     from gazebo_msgs.srv import SetEntityState  # type: ignore
     HAVE_GZ = True
-except Exception:  # pragma: no cover
+except Exception:
     SetEntityState = None  # type: ignore
     HAVE_GZ = False
 
+try:
+    from control_msgs.action import FollowJointTrajectory, GripperCommand
+    from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+    HAVE_RC = True
+except Exception:
+    FollowJointTrajectory = None  # type: ignore
+    GripperCommand = None  # type: ignore
+    HAVE_RC = False
+
+from builtin_interfaces.msg import Duration
+
 
 JOINT_NAMES = ["joint1", "joint2", "joint3", "joint4"]
-GRIPPER_NAMES = ["gripper"]
 OBJECT_NAMES = ("object_1", "object_2")
-STOW_Z = -2.0  # park height while the object is being carried
+STOW_Z = -2.0
+ARM_ACTION = "/arm_controller/follow_joint_trajectory"
+GRIPPER_ACTION = "/gripper_controller/gripper_cmd"
 
 
 class ManipulatorControllerNode(Node):
@@ -65,20 +68,19 @@ class ManipulatorControllerNode(Node):
         self.declare_parameter("carry_joints", [0.0, -0.90,  0.30,  0.60])
         self.declare_parameter("gripper_open",  0.044)
         self.declare_parameter("gripper_close", 0.010)
-        self.declare_parameter("step_wait_s",   2.0)
+        self.declare_parameter("step_wait_s",   1.5)
 
-        self.home     = list(self.get_parameter("home_joints").value)
-        self.reach    = list(self.get_parameter("reach_joints").value)
-        self.lower    = list(self.get_parameter("lower_joints").value)
-        self.carry    = list(self.get_parameter("carry_joints").value)
-        self.g_open   = float(self.get_parameter("gripper_open").value)
-        self.g_close  = float(self.get_parameter("gripper_close").value)
+        self.home = list(self.get_parameter("home_joints").value)
+        self.reach = list(self.get_parameter("reach_joints").value)
+        self.lower = list(self.get_parameter("lower_joints").value)
+        self.carry = list(self.get_parameter("carry_joints").value)
+        self.g_open = float(self.get_parameter("gripper_open").value)
+        self.g_close = float(self.get_parameter("gripper_close").value)
         self.step_wait = float(self.get_parameter("step_wait_s").value)
 
         self.cmd_sub = self.create_subscription(String, "/arm_command", self._on_cmd, 5)
         self.status_pub = self.create_publisher(String, "/arm_status", 10)
 
-        # Service clients (may be unavailable; we don't block startup on them).
         self._joint_cli = None
         self._tool_cli = None
         if HAVE_OM:
@@ -89,28 +91,28 @@ class ManipulatorControllerNode(Node):
                 SetJointPosition, "/open_manipulator/goal_tool_control"
             )
 
-        # Optional Gazebo teleport client (for the two-object visual handoff).
+        self._arm_action = None
+        self._gripper_action = None
+        if HAVE_RC:
+            self._arm_action = ActionClient(self, FollowJointTrajectory, ARM_ACTION)
+            self._gripper_action = ActionClient(self, GripperCommand, GRIPPER_ACTION)
+
         self._gz_cli = None
         if HAVE_GZ:
             self._gz_cli = self.create_client(SetEntityState, "/gazebo/set_entity_state")
 
-        # Two objects: object_1 first, object_2 second. The counter advances
-        # on every PICK and is reset by HOME for re-runs.
         self._next_object_idx = 0
         self._held_object: Optional[str] = None
-
         self._busy = threading.Lock()
+
         self.get_logger().info(
             "manipulator_controller ready "
-            f"(open_manipulator_msgs={'yes' if HAVE_OM else 'STUB'}, "
-            f"gazebo_set_entity_state={'yes' if HAVE_GZ else 'no'})"
+            f"(open_manipulator={HAVE_OM}, ros2_control={HAVE_RC}, gazebo_tp={HAVE_GZ})"
         )
-
-    # ------------------------------------------------------------------
 
     def _on_cmd(self, msg: String) -> None:
         raw = (msg.data or "").strip()
-        place_pose: Optional[Tuple[float, float, float]] = None
+        world_pose: Optional[Tuple[float, float, float]] = None
         if raw.startswith("{"):
             try:
                 data = json.loads(raw)
@@ -120,7 +122,7 @@ class ManipulatorControllerNode(Node):
             cmd = str(data.get("cmd", "")).upper()
             if "x" in data and "y" in data:
                 try:
-                    place_pose = (
+                    world_pose = (
                         float(data["x"]),
                         float(data["y"]),
                         float(data.get("z", 0.1)),
@@ -135,20 +137,20 @@ class ManipulatorControllerNode(Node):
             self._report(cmd, ok=False, reason="unknown command")
             return
         threading.Thread(
-            target=self._run_sequence, args=(cmd, place_pose), daemon=True,
+            target=self._run_sequence, args=(cmd, world_pose), daemon=True,
         ).start()
 
     def _run_sequence(
-        self, cmd: str, place_pose: Optional[Tuple[float, float, float]] = None,
+        self, cmd: str, world_pose: Optional[Tuple[float, float, float]] = None,
     ) -> None:
         if not self._busy.acquire(blocking=False):
             self._report(cmd, ok=False, reason="arm busy")
             return
         try:
             if cmd == "PICK":
-                ok = self._pick()
+                ok = self._pick(world_pose)
             elif cmd == "PLACE":
-                ok = self._place(place_pose)
+                ok = self._place(world_pose)
             else:
                 ok = self._send_joints(self.home, "home")
                 self._next_object_idx = 0
@@ -160,132 +162,129 @@ class ManipulatorControllerNode(Node):
         finally:
             self._busy.release()
 
-    # ------------------------------------------------------------------
-    # Sequences
-
-    def _pick(self) -> bool:
-        self.get_logger().info("ARM: PICK sequence")
+    def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
+        self.get_logger().info(f"ARM: PICK (object pose={pose})")
         ok = True
         ok &= self._send_gripper(self.g_open, "open gripper")
-        ok &= self._send_joints(self.reach, "reach forward")
-        ok &= self._send_joints(self.lower, "lower to object")
+        ok &= self._send_joints(self.reach, "reach")
+        ok &= self._send_joints(self.lower, "lower")
         ok &= self._send_gripper(self.g_close, "close gripper")
-        ok &= self._send_joints(self.carry, "lift to carry")
-        # Visually "take" the object away from the floor so the FSM can verify
-        # which object is currently held when the second pickup runs.
-        if self._next_object_idx < len(OBJECT_NAMES):
-            name = OBJECT_NAMES[self._next_object_idx]
-            self._next_object_idx += 1
-            self._held_object = name
-            self._teleport(name, x=0.0, y=0.0, z=STOW_Z)
-            self.get_logger().info(f"carrying {name}")
-        else:
-            self.get_logger().warn("PICK requested but no objects left to grab")
+        ok &= self._send_joints(self.carry, "carry")
+        if self._next_object_idx >= len(OBJECT_NAMES):
+            self.get_logger().warn("no objects left to pick")
+            return ok
+        name = OBJECT_NAMES[self._next_object_idx]
+        self._next_object_idx += 1
+        self._held_object = name
+        if pose is not None:
+            ox, oy, oz = pose
+            side = -0.03 if name == OBJECT_NAMES[0] else 0.03
+            self._teleport(name, ox + side, oy, oz)
+            time.sleep(0.2)
+        self._teleport(name, 0.0, 0.0, STOW_Z)
+        self.get_logger().info(f"carrying {name}")
         return ok
 
     def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
-        self.get_logger().info(f"ARM: PLACE sequence (target pose={pose})")
+        self.get_logger().info(f"ARM: PLACE (target={pose})")
         ok = True
-        ok &= self._send_joints(self.reach, "extend over target")
-        ok &= self._send_joints(self.lower, "lower to ground")
-        ok &= self._send_gripper(self.g_open, "release object")
-        ok &= self._send_joints(self.home, "retract home")
-        if self._held_object is not None and pose is not None:
-            # Stagger the two objects a few cm apart so the second one doesn't
-            # spawn inside the first.
+        ok &= self._send_joints(self.reach, "reach over target")
+        ok &= self._send_joints(self.lower, "lower")
+        ok &= self._send_gripper(self.g_open, "release")
+        ok &= self._send_joints(self.home, "home")
+        if self._held_object and pose is not None:
             x, y, z = pose
-            offset = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
-            self._teleport(self._held_object, x=x + offset, y=y, z=max(z, 0.1))
+            off = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
+            self._teleport(self._held_object, x + off, y, max(z, 0.10))
             self.get_logger().info(
-                f"dropped {self._held_object} at ({x + offset:.2f}, {y:.2f})"
+                f"dropped {self._held_object} at ({x + off:.2f}, {y:.2f})"
             )
             self._held_object = None
-        elif self._held_object is not None:
-            self.get_logger().warn(
-                "PLACE: no target pose provided; object stays stowed"
-            )
         return ok
 
-    # ------------------------------------------------------------------
-    # Gazebo teleport
-
-    def _teleport(self, name: str, x: float, y: float, z: float) -> None:
+    def _teleport(self, name: str, x: float, y: float, z: float) -> bool:
         if self._gz_cli is None:
-            return
-        if not self._gz_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().warn("set_entity_state service not ready; skipping teleport")
-            return
+            return True
+        if not self._gz_cli.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn("set_entity_state unavailable")
+            return False
         req = SetEntityState.Request()
-        try:
-            req.state.name = name
-            req.state.pose.position.x = float(x)
-            req.state.pose.position.y = float(y)
-            req.state.pose.position.z = float(z)
-            req.state.pose.orientation.w = 1.0
-            req.state.reference_frame = "world"
-        except Exception as exc:
-            self.get_logger().warn(f"could not fill teleport request: {exc}")
-            return
-        self._gz_cli.call_async(req)
-
-    # ------------------------------------------------------------------
-    # Low-level helpers
+        req.state.name = name
+        req.state.pose.position.x = float(x)
+        req.state.pose.position.y = float(y)
+        req.state.pose.position.z = float(z)
+        req.state.pose.orientation.w = 1.0
+        req.state.reference_frame = "world"
+        future = self._gz_cli.call_async(req)
+        return self._await_future(future, timeout=5.0, label=f"tp {name}")
 
     def _send_joints(self, positions: List[float], label: str) -> bool:
-        self.get_logger().info(f"ARM joint -> {label}: {positions}")
-        if not HAVE_OM or self._joint_cli is None:
-            time.sleep(self.step_wait)
-            return True
-        if not self._joint_cli.wait_for_service(timeout_sec=2.0):
-            self.get_logger().warn(f"joint service not ready (skipping {label})")
-            time.sleep(self.step_wait)
-            return False
-        req = SetJointPosition.Request()
-        try:
-            # The exact field set depends on the open_manipulator_msgs version.
-            # The common layout has planning_group, joint_position, path_time.
+        self.get_logger().info(f"joints {label}: {positions}")
+        if HAVE_OM and self._joint_cli and self._joint_cli.wait_for_service(timeout_sec=1.0):
+            req = SetJointPosition.Request()
             req.planning_group = "arm"
             req.joint_position.joint_name = list(JOINT_NAMES)
             req.joint_position.position = list(positions)
             req.path_time = self.step_wait
-        except Exception as exc:
-            self.get_logger().warn(f"could not fill joint request: {exc}")
-            return False
-        future = self._joint_cli.call_async(req)
-        return self._await(future, timeout=self.step_wait + 2.0, label=label)
+            return self._await_future(
+                self._joint_cli.call_async(req), self.step_wait + 2.0, label
+            )
+        if self._arm_action and self._arm_action.wait_for_server(timeout_sec=1.0):
+            traj = JointTrajectory()
+            traj.joint_names = list(JOINT_NAMES)
+            pt = JointTrajectoryPoint()
+            pt.positions = list(positions)
+            pt.time_from_start = Duration(sec=int(self.step_wait), nanosec=0)
+            traj.points = [pt]
+            goal = FollowJointTrajectory.Goal()
+            goal.trajectory = traj
+            send_future = self._arm_action.send_goal_async(goal)
+            if not self._await_future(send_future, 5.0, label):
+                return False
+            handle = send_future.result()
+            if handle is None or not handle.accepted:
+                return False
+            return self._await_future(
+                handle.get_result_async(), self.step_wait + 2.0, label
+            )
+        time.sleep(self.step_wait)
+        return True
 
     def _send_gripper(self, position: float, label: str) -> bool:
-        self.get_logger().info(f"ARM tool -> {label}: {position:.3f}")
-        if not HAVE_OM or self._tool_cli is None:
-            time.sleep(self.step_wait)
-            return True
-        if not self._tool_cli.wait_for_service(timeout_sec=2.0):
-            self.get_logger().warn(f"tool service not ready (skipping {label})")
-            time.sleep(self.step_wait)
-            return False
-        req = SetJointPosition.Request()
-        try:
+        self.get_logger().info(f"gripper {label}: {position:.3f}")
+        if HAVE_OM and self._tool_cli and self._tool_cli.wait_for_service(timeout_sec=1.0):
+            req = SetJointPosition.Request()
             req.planning_group = "gripper"
-            req.joint_position.joint_name = list(GRIPPER_NAMES)
+            req.joint_position.joint_name = ["gripper"]
             req.joint_position.position = [position]
             req.path_time = self.step_wait
-        except Exception as exc:
-            self.get_logger().warn(f"could not fill tool request: {exc}")
-            return False
-        future = self._tool_cli.call_async(req)
-        return self._await(future, timeout=self.step_wait + 2.0, label=label)
+            return self._await_future(
+                self._tool_cli.call_async(req), self.step_wait + 2.0, label
+            )
+        if self._gripper_action and self._gripper_action.wait_for_server(timeout_sec=1.0):
+            goal = GripperCommand.Goal()
+            goal.command.position = float(position)
+            goal.command.max_effort = 5.0
+            send_future = self._gripper_action.send_goal_async(goal)
+            if not self._await_future(send_future, 5.0, label):
+                return False
+            handle = send_future.result()
+            if handle is None or not handle.accepted:
+                return False
+            return self._await_future(
+                handle.get_result_async(), self.step_wait + 2.0, label
+            )
+        time.sleep(self.step_wait)
+        return True
 
-    def _await(self, future, timeout: float, label: str) -> bool:
+    def _await_future(self, future, timeout: float, label: str) -> bool:
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             if future.done():
-                # We do not inspect the response: many bringup configs return
-                # a custom is_planned bool; treating "no exception" as success
-                # is sufficient for the FSM. Pause one step before returning.
-                time.sleep(self.step_wait)
+                time.sleep(0.3)
                 return True
             time.sleep(0.05)
-        self.get_logger().warn(f"arm step '{label}' timed out")
+        self.get_logger().warn(f"timeout: {label}")
         return False
 
     def _report(self, cmd: str, ok: bool, reason: str = "") -> None:

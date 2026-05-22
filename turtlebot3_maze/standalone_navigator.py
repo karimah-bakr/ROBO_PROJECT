@@ -162,6 +162,7 @@ class MazeMissionNavigator(Node):
     FRONT_SAFETY   = 0.12   # m -- abort forward if front sector < this
     FRONT_SLOW     = 0.22   # m -- start slowing down below this
     SCAN_FRONT_DEG = 15.0   # ± window around 0° for the safety check
+    MIN_FWD_BEFORE_LIDAR_ABORT = 0.08
 
     def __init__(self) -> None:
         super().__init__("maze_mission_navigator")
@@ -343,33 +344,21 @@ class MazeMissionNavigator(Node):
             return
 
         if kind == "pick":
-            if not self.arm_busy and self.arm_last_ok is None:
-                self.get_logger().info(f"PICK at cell {self.cell}")
-                self.arm_busy = True
-                self.arm_last_ok = None
-                self.arm_pub.publish(String(data=json.dumps({"cmd": "PICK"})))
-                return
-            if self.arm_busy:
-                return
-            # done
-            self.arm_last_ok = None
-            self.script_i += 1
+            ox, oy = cell_center(OBJECT_CELL)
+            self._arm_step(
+                "pick",
+                must_be_at=OBJECT_CELL,
+                payload={"cmd": "PICK", "x": ox, "y": oy, "z": 0.10},
+            )
             return
 
         if kind == "place":
-            if not self.arm_busy and self.arm_last_ok is None:
-                x, y, z = payload  # type: ignore[misc]
-                self.get_logger().info(f"PLACE at ({x:.2f}, {y:.2f}, {z:.2f})")
-                self.arm_busy = True
-                self.arm_last_ok = None
-                self.arm_pub.publish(String(
-                    data=json.dumps({"cmd": "PLACE", "x": x, "y": y, "z": z})
-                ))
-                return
-            if self.arm_busy:
-                return
-            self.arm_last_ok = None
-            self.script_i += 1
+            x, y, z = payload  # type: ignore[misc]
+            self._arm_step(
+                "place",
+                must_be_at=TARGET_CELL,
+                payload={"cmd": "PLACE", "x": x, "y": y, "z": z},
+            )
             return
 
     # -------------------------------------------------------------------------
@@ -419,8 +408,7 @@ class MazeMissionNavigator(Node):
             self._stop()
             return True
 
-        # LIDAR safety: if a wall is suddenly close, abort the forward.
-        if self.front_dist < self.FRONT_SAFETY:
+        if dist >= self.MIN_FWD_BEFORE_LIDAR_ABORT and self.front_dist < self.FRONT_SAFETY:
             self.get_logger().warn(
                 f"front={self.front_dist:.2f}m < safety {self.FRONT_SAFETY:.2f}m; "
                 f"aborting forward at dist={dist:.2f}m"
@@ -465,6 +453,36 @@ class MazeMissionNavigator(Node):
         self.cell = m["next_cell"]
         self.step_queue.pop(0)
         self.get_logger().info(f"reached cell {self.cell}, heading {self.heading}")
+
+    def _arm_step(
+        self,
+        label: str,
+        must_be_at: Tuple[int, int],
+        payload: dict,
+    ) -> None:
+        if self.cell != must_be_at:
+            cells = bfs(self.cell, must_be_at)
+            if not cells:
+                self.get_logger().error(f"no path to {must_be_at} for {label}")
+                self.script_i = len(self.script)
+                return
+            self.step_queue = cells_to_steps(cells)
+            return
+        if self.arm_busy:
+            return
+        if self.arm_last_ok is None:
+            self.get_logger().info(f"{label.upper()} at {self.cell}: {payload}")
+            self.arm_busy = True
+            self.arm_pub.publish(String(data=json.dumps(payload)))
+            return
+        if self.arm_last_ok:
+            self.arm_last_ok = None
+            self.script_i += 1
+        else:
+            self.get_logger().error(f"{label} failed — retry")
+            self.arm_last_ok = None
+            self.arm_busy = True
+            self.arm_pub.publish(String(data=json.dumps(payload)))
 
 
 # =============================================================================
