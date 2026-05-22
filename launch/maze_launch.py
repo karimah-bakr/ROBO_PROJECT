@@ -1,13 +1,16 @@
 """Launch maze world + TurtleBot3 with OpenManipulator-X (Gazebo).
 
-Required:
-    export TURTLEBOT3_MODEL=waffle_pi
-    sudo apt install ros-humble-turtlebot3-gazebo \\
-                     ros-humble-turtlebot3-manipulation \\
-                     ros-humble-turtlebot3-manipulation-gazebo
+Bringup loads diff_drive_controller in simulation (upstream yaml omits it).
+Mission nodes start after the robot and controllers are ready.
 
 Run:
+    export TURTLEBOT3_MODEL=waffle_pi
     ros2 launch turtlebot3_maze maze_launch.py
+
+Quick checks if the base does not move:
+    ros2 topic echo /odom --once
+    ros2 control list_controllers
+    ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.15}}" --once
 """
 
 import os
@@ -20,13 +23,13 @@ from launch.actions import (
     IncludeLaunchDescription,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
-    # Manipulation is designed for Waffle Pi; set default if user forgot.
     os.environ.setdefault("TURTLEBOT3_MODEL", "waffle_pi")
 
     pkg_share = get_package_share_directory("turtlebot3_maze")
@@ -43,9 +46,10 @@ def generate_launch_description() -> LaunchDescription:
 
     tb3_gazebo_share = get_package_share_directory("turtlebot3_gazebo")
     tb3_manip_share = get_package_share_directory("turtlebot3_manipulation_gazebo")
-    gazebo_ros_share = get_package_share_directory("gazebo_ros")
+    tb3_manip_desc_share = get_package_share_directory(
+        "turtlebot3_manipulation_description"
+    )
 
-    # So Gazebo finds TB3 + manipulator meshes.
     set_model_path = [
         AppendEnvironmentVariable(
             "GAZEBO_MODEL_PATH",
@@ -57,44 +61,25 @@ def generate_launch_description() -> LaunchDescription:
             os.path.join(tb3_manip_share, "models"),
             prepend=True,
         ),
+        AppendEnvironmentVariable(
+            "GAZEBO_MODEL_PATH",
+            os.path.join(tb3_manip_desc_share, "urdf"),
+            prepend=True,
+        ),
     ]
 
-    # ros2_control + robot_state_publisher (use_sim:=true → Gazebo hardware).
-    manip_base = IncludeLaunchDescription(
+    manip_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(tb3_manip_share, "launch", "base.launch.py")
+            os.path.join(pkg_share, "launch", "manipulation_maze_bringup.launch.py")
         ),
         launch_arguments={
+            "world": world_path,
             "use_sim": "true",
-            "start_rviz": "false",
+            "x_pose": spawn_x,
+            "y_pose": spawn_y,
+            "z_pose": "0.01",
+            "yaw": spawn_yaw,
         }.items(),
-    )
-
-    gzserver = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(gazebo_ros_share, "launch", "gzserver.launch.py")
-        ),
-        launch_arguments={"world": world_path, "verbose": "true"}.items(),
-    )
-    gzclient = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(gazebo_ros_share, "launch", "gzclient.launch.py")
-        ),
-    )
-
-    # Spawn full manipulation URDF (base + arm + gripper + lidar plugins).
-    spawn_robot = Node(
-        package="gazebo_ros",
-        executable="spawn_entity.py",
-        arguments=[
-            "-topic", "robot_description",
-            "-entity", "turtlebot3_manipulation_system",
-            "-x", spawn_x,
-            "-y", spawn_y,
-            "-z", "0.01",
-            "-Y", spawn_yaw,
-        ],
-        output="screen",
     )
 
     lidar = Node(
@@ -139,6 +124,7 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         arguments=["-d", rviz_path],
         parameters=[use_sim_time],
+        condition=IfCondition(use_rviz),
     )
 
     return LaunchDescription([
@@ -147,11 +133,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("spawn_yaw", default_value="1.5708"),
         DeclareLaunchArgument("rviz", default_value="false"),
         *set_model_path,
-        gzserver,
-        gzclient,
-        manip_base,
-        TimerAction(period=4.0, actions=[spawn_robot]),
-        TimerAction(period=6.0, actions=[lidar, mapper, planner, arm]),
-        TimerAction(period=8.0, actions=[navigator]),
-        TimerAction(period=2.0, actions=[rviz]),
+        manip_bringup,
+        TimerAction(period=14.0, actions=[lidar, mapper, planner, arm, navigator]),
+        rviz,
     ])

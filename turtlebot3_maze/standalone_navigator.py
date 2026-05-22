@@ -168,8 +168,8 @@ class MazeMissionNavigator(Node):
     SCAN_FRONT_DEG = 15.0   # ± window around 0° for the safety check
     SCAN_MIN_RANGE = 0.12   # ignore closer returns (arm / noise)
     MIN_FWD_BEFORE_LIDAR_ABORT = 0.22  # must drive ~half a cell before lidar can abort
-    SENSOR_WARMUP_ODOM = 3
-    SENSOR_WARMUP_SCAN = 3
+    SENSOR_WARMUP_ODOM = 2
+    SENSOR_WARMUP_SCAN = 1
 
     def __init__(self) -> None:
         super().__init__("maze_mission_navigator")
@@ -183,10 +183,15 @@ class MazeMissionNavigator(Node):
 
         # publishers
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
+        # diff_drive_controller listens on /cmd_vel when spawned via ros2_control
         self.arm_pub = self.create_publisher(String, "/arm_command", 10)
 
         # subscribers
-        self.create_subscription(Odometry,  "/odom", self._on_odom, odom_qos)
+        self.create_subscription(Odometry, "/odom", self._on_odom, odom_qos)
+        # ros2_control diff_drive may publish here instead of /odom
+        self.create_subscription(
+            Odometry, "/diff_drive_controller/odom", self._on_odom, odom_qos,
+        )
         self.create_subscription(LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(String,    "/arm_status", self._on_arm,    10)
 
@@ -354,12 +359,19 @@ class MazeMissionNavigator(Node):
             return
         if not self._sensors_ready():
             if not self._waiting_logged:
-                self.get_logger().info(
-                    f"waiting for sensors (odom={self._odom_count}, "
-                    f"scan={self._scan_count})..."
+                self.get_logger().warn(
+                    f"waiting for sensors — need odom>={self.SENSOR_WARMUP_ODOM} "
+                    f"scan>={self.SENSOR_WARMUP_SCAN}; "
+                    f"got odom={self._odom_count} scan={self._scan_count}. "
+                    f"If odom stays 0: check /cmd_vel driver (diff_drive plugin or "
+                    f"diff_drive_controller). Run: ros2 topic list | grep odom"
                 )
                 self._waiting_logged = True
             return
+        if self._waiting_logged:
+            self.get_logger().info(
+                f"sensors ready (odom={self._odom_count}, scan={self._scan_count})"
+            )
         self._waiting_logged = False
 
         # 1) drive any active low-level motion
