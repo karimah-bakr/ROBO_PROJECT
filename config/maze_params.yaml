@@ -68,6 +68,10 @@ path_planner:
 standalone_navigator:
   ros__parameters:
     use_sim_time: true
+    # Odom tolerance for goto/pick (meters from cell centre).
+    goal_arrival_tol_m: 0.18
+    # Skip LIDAR forward-abort when this close to the active goto goal centre.
+    goal_lidar_bypass_m: 0.25
 
 manipulator_controller:
   ros__parameters:

@@ -3,8 +3,8 @@
 
 Mission
 -------
-    (1,3) start -> (5,2) pick (objects in 5,1) -> (1,7) place
-                -> (5,2) pick object_2 -> (1,7) place
+    (1,3) start -> (5,1) pick object_1 -> (1,7) place
+                -> (5,1) pick object_2 -> (1,7) place
                 -> (1,3) return -> done
 
 The script does everything itself:
@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import math
-import time
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
@@ -73,11 +72,8 @@ ROWS = 7
 COLS = 7
 
 START_CELL  = (1, 3)
-OBJECT_CELL = (5, 1)   # where the cubes sit in the world
-PICK_CELL   = (5, 2)   # stand here facing W to pick objects in (5,1)
+OBJECT_CELL = (5, 1)
 TARGET_CELL = (1, 7)
-PICK_FACE   = "W"
-CELL_ARRIVE_TOL_M = 0.28  # odom snap if close enough to a cell centre
 
 # Initial heading from launch: spawn_yaw = pi/2 -> facing North (+Y).
 INITIAL_HEADING = "N"
@@ -147,6 +143,21 @@ def cell_center(rc: Tuple[int, int]) -> Tuple[float, float]:
     return (c - 0.5) * CELL, (r - 0.5) * CELL
 
 
+def world_to_cell(x: float, y: float) -> Tuple[int, int]:
+    """Snap continuous world pose to the nearest maze cell (1-indexed)."""
+    col = int(math.floor(x / CELL + 1e-9)) + 1
+    row = int(math.floor(y / CELL + 1e-9)) + 1
+    return (
+        max(1, min(ROWS, row)),
+        max(1, min(COLS, col)),
+    )
+
+
+def dist_to_cell_center(x: float, y: float, cell: Tuple[int, int]) -> float:
+    cx, cy = cell_center(cell)
+    return math.hypot(x - cx, y - cy)
+
+
 def wrap(a: float) -> float:
     while a >  math.pi: a -= 2.0 * math.pi
     while a < -math.pi: a += 2.0 * math.pi
@@ -166,13 +177,17 @@ class MazeMissionNavigator(Node):
     FRONT_SAFETY   = 0.12   # m -- abort forward if front sector < this
     FRONT_SLOW     = 0.22   # m -- start slowing down below this
     SCAN_FRONT_DEG = 15.0   # ± window around 0° for the safety check
-    SCAN_MIN_RANGE = 0.12   # ignore closer returns (arm / noise)
-    MIN_FWD_BEFORE_LIDAR_ABORT = 0.22  # must drive ~half a cell before lidar can abort
-    SENSOR_WARMUP_ODOM = 2
-    SENSOR_WARMUP_SCAN = 0   # odom only; /scan optional for navigation
+    MIN_FWD_BEFORE_LIDAR_ABORT = 0.08
+    GOAL_ARRIVAL_TOL = 0.18       # m — odom within this of cell centre counts as arrived
+    GOAL_LIDAR_BYPASS = 0.25      # m — disable lidar abort when this close to goal centre
 
     def __init__(self) -> None:
         super().__init__("maze_mission_navigator")
+
+        self.declare_parameter("goal_arrival_tol_m", self.GOAL_ARRIVAL_TOL)
+        self.declare_parameter("goal_lidar_bypass_m", self.GOAL_LIDAR_BYPASS)
+        self.goal_arrival_tol = float(self.get_parameter("goal_arrival_tol_m").value)
+        self.goal_lidar_bypass = float(self.get_parameter("goal_lidar_bypass_m").value)
 
         # Gazebo publishes /odom as reliable; /scan as sensor (best effort).
         odom_qos = QoSProfile(
@@ -181,19 +196,12 @@ class MazeMissionNavigator(Node):
             history=HistoryPolicy.KEEP_LAST,
         )
 
-        # publishers — ros2_control diff_drive uses cmd_vel_unstamped in its namespace
+        # publishers
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
-        self.cmd_pub_dd = self.create_publisher(
-            Twist, "/diff_drive_controller/cmd_vel_unstamped", 10,
-        )
         self.arm_pub = self.create_publisher(String, "/arm_command", 10)
 
         # subscribers
-        self.create_subscription(Odometry, "/odom", self._on_odom, odom_qos)
-        # ros2_control diff_drive may publish here instead of /odom
-        self.create_subscription(
-            Odometry, "/diff_drive_controller/odom", self._on_odom, odom_qos,
-        )
+        self.create_subscription(Odometry,  "/odom", self._on_odom, odom_qos)
         self.create_subscription(LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(String,    "/arm_status", self._on_arm,    10)
 
@@ -218,11 +226,11 @@ class MazeMissionNavigator(Node):
         # kinds: "goto" -> goal_cell ; "pick" -> None ; "place" -> (x,y,z)
         target_xy = cell_center(TARGET_CELL)
         self.script: List[Tuple[str, object]] = [
-            ("goto",  PICK_CELL),
+            ("goto",  OBJECT_CELL),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
-            ("goto",  PICK_CELL),
+            ("goto",  OBJECT_CELL),
             ("pick",  None),
             ("goto",  TARGET_CELL),
             ("place", (target_xy[0], target_xy[1], 0.10)),
@@ -234,6 +242,8 @@ class MazeMissionNavigator(Node):
         # active sub-action state
         # for "goto": queued cardinal-heading steps to consume
         self.step_queue: List[str] = []
+        # goal cell for the active goto step (used for odom/lidar arrival checks)
+        self._goto_goal: Optional[Tuple[int, int]] = None
         # current low-level motion: None | {"type":"turn"|"forward", ...}
         self.motion: Optional[dict] = None
 
@@ -241,82 +251,26 @@ class MazeMissionNavigator(Node):
         self._waiting_logged = False
         self._scan_count = 0
         self._odom_count = 0
-        self._cell_synced = False
-        self._ignore_lidar_once = False
-        self._lidar_disabled_until = 0.0
-        self._stall_replans = 0
-        self._last_plan_key: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
 
         self.create_timer(0.05, self._tick)
         self.create_timer(2.0, self._heartbeat)
         self.get_logger().info(
             f"standalone_navigator ready: "
-            f"start={START_CELL} pick@{PICK_CELL} object={OBJECT_CELL} target={TARGET_CELL}"
+            f"start={START_CELL} object={OBJECT_CELL} target={TARGET_CELL}"
         )
 
-    def _near_cell(self, cell: Tuple[int, int]) -> bool:
-        cx, cy = cell_center(cell)
-        return math.hypot(self.x - cx, self.y - cy) < self.CELL_ARRIVE_TOL_M
-
-    def _sensors_ready(self) -> bool:
-        return self._odom_count >= self.SENSOR_WARMUP_ODOM
-
-    def _heading_from_yaw(self, yaw: float) -> str:
-        best_h = self.heading
-        best_err = float("inf")
-        for h in HEADINGS:
-            err = abs(wrap(YAW[h] - yaw))
-            if err < best_err:
-                best_err = err
-                best_h = h
-        return best_h
-
-    def _publish_twist(self, twist: Twist) -> None:
-        self.cmd_pub.publish(twist)
-        self.cmd_pub_dd.publish(twist)
-
-    def _lidar_active(self) -> bool:
-        return time.monotonic() >= self._lidar_disabled_until
+    def _at_goal_cell(self, goal: Tuple[int, int]) -> bool:
+        return dist_to_cell_center(self.x, self.y, goal) <= self.goal_arrival_tol
 
     def _sync_cell_from_odom(self) -> None:
-        best = self.cell
-        best_d = float("inf")
-        for r in range(1, ROWS + 1):
-            for c in range(1, COLS + 1):
-                cx, cy = cell_center((r, c))
-                d = math.hypot(self.x - cx, self.y - cy)
-                if d < best_d:
-                    best_d = d
-                    best = (r, c)
-        if best_d < CELL * 0.55:
-            if best != self.cell:
-                self.get_logger().info(
-                    f"odom sync: grid {self.cell} -> {best} "
-                    f"(dist={best_d:.2f}m pos=({self.x:.2f},{self.y:.2f}))"
-                )
-            self.cell = best
+        self.cell = world_to_cell(self.x, self.y)
 
     def _heartbeat(self) -> None:
         kind = self.script[self.script_i][0] if self.script_i < len(self.script) else "idle"
-        front = (
-            f"{self.front_dist:.2f}m"
-            if math.isfinite(self.front_dist)
-            else "inf"
-        )
-        if not self.have_odom or not self._sensors_ready():
-            state = "WAIT_ODOM"
-        elif self.arm_busy:
-            state = "ARM_BUSY"
-        elif self.motion is not None:
-            state = f"MOTION_{self.motion.get('type', '?')}"
-        elif self.step_queue:
-            state = "DRIVE_QUEUE"
-        else:
-            state = "PLAN"
         self.get_logger().info(
-            f"hb: cell={self.cell} heading={self.heading} step={kind} state={state} "
-            f"odom={self._odom_count} scan={self._scan_count} front={front} "
-            f"queue={len(self.step_queue)}"
+            f"hb: cell={self.cell} heading={self.heading} step={kind} "
+            f"odom={self._odom_count} scan={self._scan_count} "
+            f"front={self.front_dist:.2f}m"
         )
 
     # -------------------------------------------------------------------------
@@ -333,14 +287,6 @@ class MazeMissionNavigator(Node):
         self.yaw = math.atan2(siny, cosy)
         self.have_odom = True
         self._odom_count += 1
-        if not self._cell_synced and self._odom_count >= self.SENSOR_WARMUP_ODOM:
-            self._sync_cell_from_odom()
-            self.heading = self._heading_from_yaw(self.yaw)
-            self._cell_synced = True
-            self.get_logger().info(
-                f"odom init: pos=({self.x:.2f},{self.y:.2f}) yaw={self.yaw:.2f} "
-                f"-> cell={self.cell} heading={self.heading}"
-            )
 
     def _on_scan(self, msg: LaserScan) -> None:
         self._scan_count += 1
@@ -351,13 +297,12 @@ class MazeMissionNavigator(Node):
         half = math.radians(self.SCAN_FRONT_DEG)
         rmin = float("inf")
         for i, r in enumerate(msg.ranges):
-            if not math.isfinite(r) or r < self.SCAN_MIN_RANGE:
+            if not math.isfinite(r) or r < 0.06:
                 continue
             ang = wrap(msg.angle_min + i * msg.angle_increment)
             if -half <= ang <= half and r < rmin:
                 rmin = r
-        if math.isfinite(rmin):
-            self.front_dist = rmin
+        self.front_dist = rmin
 
     def _on_arm(self, msg: String) -> None:
         try:
@@ -377,7 +322,7 @@ class MazeMissionNavigator(Node):
     # -------------------------------------------------------------------------
 
     def _stop(self) -> None:
-        self._publish_twist(Twist())
+        self.cmd_pub.publish(Twist())
 
     def _tick(self) -> None:
         if not self.have_odom:
@@ -385,20 +330,8 @@ class MazeMissionNavigator(Node):
                 self.get_logger().info("waiting for /odom...")
                 self._waiting_logged = True
             return
-        if not self._sensors_ready():
-            if not self._waiting_logged:
-                self.get_logger().warn(
-                    f"waiting for /odom (need >={self.SENSOR_WARMUP_ODOM} msgs, "
-                    f"got {self._odom_count}). Check: ros2 topic echo /odom --once "
-                    f"or /diff_drive_controller/odom --once"
-                )
-                self._waiting_logged = True
-            return
-        if self._waiting_logged:
-            self.get_logger().info(
-                f"sensors ready (odom={self._odom_count}, scan={self._scan_count})"
-            )
-        self._waiting_logged = False
+
+        self._sync_cell_from_odom()
 
         # 1) drive any active low-level motion
         if self.motion is not None:
@@ -427,45 +360,32 @@ class MazeMissionNavigator(Node):
         if kind == "goto":
             goal = payload  # type: ignore[assignment]
             assert isinstance(goal, tuple)
-            if self.cell == goal or (
-                self._cell_synced and self._near_cell(goal)
-            ):
-                self.cell = goal
-                self.get_logger().info(f"arrived at cell {goal}")
+            if self.cell == goal or self._at_goal_cell(goal):
+                self.get_logger().info(
+                    f"arrived at goal {goal} (cell={self.cell}, "
+                    f"dist={dist_to_cell_center(self.x, self.y, goal):.2f}m)"
+                )
+                self._goto_goal = None
                 self.script_i += 1
-                self._stall_replans = 0
                 return
+            self._goto_goal = goal
             cells = bfs(self.cell, goal)
             if not cells:
                 self.get_logger().error(f"no path {self.cell} -> {goal}; aborting")
                 self.script_i = len(self.script)
                 return
-            plan_key = (self.cell, goal)
-            if plan_key == self._last_plan_key:
-                self._stall_replans += 1
-            else:
-                self._stall_replans = 0
-            self._last_plan_key = plan_key
-            if self._stall_replans >= 4:
-                self.get_logger().warn(
-                    "navigation replan loop; disabling lidar safety for 6s"
-                )
-                self._lidar_disabled_until = time.monotonic() + 6.0
-                self._stall_replans = 0
             steps = cells_to_steps(cells)
             self.get_logger().info(
                 f"plan {self.cell}->{goal}: {len(steps)} steps via {cells}"
             )
             self.step_queue = steps
-            self._start_next_step()
             return
 
         if kind == "pick":
             ox, oy = cell_center(OBJECT_CELL)
             self._arm_step(
                 "pick",
-                must_be_at=PICK_CELL,
-                face=PICK_FACE,
+                must_be_at=OBJECT_CELL,
                 payload={"cmd": "PICK", "x": ox, "y": oy, "z": 0.10},
             )
             return
@@ -500,6 +420,7 @@ class MazeMissionNavigator(Node):
             "start_y":  self.y,
             "target":   CELL,
             "next_cell": (self.cell[0] + DR[d], self.cell[1] + DC[d]),
+            "goal_cell": self._goto_goal,
         }
 
     def _motion_step(self) -> bool:
@@ -513,7 +434,7 @@ class MazeMissionNavigator(Node):
                 self._stop()
                 return True
             twist.angular.z = self.ANG_SPEED if err > 0 else -self.ANG_SPEED
-            self._publish_twist(twist)
+            self.cmd_pub.publish(twist)
             return False
 
         # forward
@@ -526,9 +447,13 @@ class MazeMissionNavigator(Node):
             self._stop()
             return True
 
+        goal_cell = m.get("goal_cell")
+        near_goal = (
+            goal_cell is not None
+            and dist_to_cell_center(self.x, self.y, goal_cell) < self.goal_lidar_bypass
+        )
         if (
-            self._lidar_active()
-            and not self._ignore_lidar_once
+            not near_goal
             and dist >= self.MIN_FWD_BEFORE_LIDAR_ABORT
             and self.front_dist < self.FRONT_SAFETY
         ):
@@ -551,7 +476,7 @@ class MazeMissionNavigator(Node):
         yaw_err = wrap(YAW[self.heading] - self.yaw)
         twist.linear.x = speed
         twist.angular.z = max(-0.4, min(0.4, 1.5 * yaw_err))
-        self._publish_twist(twist)
+        self.cmd_pub.publish(twist)
         return False
 
     def _motion_done(self) -> None:
@@ -566,30 +491,17 @@ class MazeMissionNavigator(Node):
 
         # forward
         if m.get("aborted"):
-            dist = math.hypot(self.x - m["start_x"], self.y - m["start_y"])
-            if dist >= CELL * 0.65:
-                self.cell = m["next_cell"]
-                self.step_queue.pop(0)
-                self._ignore_lidar_once = False
-                self.get_logger().warn(
-                    f"forward partial ({dist:.2f}m) -> snapped to cell {self.cell}"
+            goal_cell = m.get("goal_cell")
+            if goal_cell is not None and self._at_goal_cell(goal_cell):
+                self.get_logger().info(
+                    f"forward aborted but within {self.goal_arrival_tol:.2f}m of "
+                    f"goal {goal_cell} — treating as arrived"
                 )
+                self.cell = world_to_cell(self.x, self.y)
+                self._goto_goal = None
+                self.step_queue.clear()
                 return
-            if not self._ignore_lidar_once:
-                self._ignore_lidar_once = True
-                self.get_logger().warn(
-                    f"forward aborted early at {dist:.2f}m; retry without lidar"
-                )
-                self.motion = {
-                    "type": "forward",
-                    "start_x": self.x,
-                    "start_y": self.y,
-                    "target": CELL - dist,
-                    "next_cell": m["next_cell"],
-                }
-                return
-            self._ignore_lidar_once = False
-            self.get_logger().warn("forward aborted twice; re-planning")
+            self.get_logger().warn("forward aborted; re-planning from current cell")
             self.step_queue.clear()
             return
 
@@ -603,27 +515,17 @@ class MazeMissionNavigator(Node):
         label: str,
         must_be_at: Tuple[int, int],
         payload: dict,
-        face: Optional[str] = None,
     ) -> None:
-        if face and self.heading != face:
-            self.get_logger().info(f"{label}: turn {self.heading} -> {face} for pick/place")
-            self.motion = {
-                "type": "turn",
-                "target_yaw": YAW[face],
-                "next_heading": face,
-            }
-            return
-        if self._near_cell(must_be_at):
-            self.cell = must_be_at
-        if self.cell != must_be_at:
+        if self.cell != must_be_at and not self._at_goal_cell(must_be_at):
             cells = bfs(self.cell, must_be_at)
             if not cells:
                 self.get_logger().error(f"no path to {must_be_at} for {label}")
                 self.script_i = len(self.script)
                 return
+            self._goto_goal = must_be_at
             self.step_queue = cells_to_steps(cells)
-            self._start_next_step()
             return
+        self.cell = world_to_cell(self.x, self.y)
         if self.arm_busy:
             return
         if self.arm_last_ok is None:

@@ -163,44 +163,58 @@ class ManipulatorControllerNode(Node):
             self._busy.release()
 
     def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
-        self.get_logger().info(f"ARM: PICK (object pose={pose})")
-        ok = True
-        ok &= self._send_gripper(self.g_open, "open gripper")
-        ok &= self._send_joints(self.reach, "reach")
-        ok &= self._send_joints(self.lower, "lower")
-        ok &= self._send_gripper(self.g_close, "close gripper")
-        ok &= self._send_joints(self.carry, "carry")
+        self.get_logger().info("PICK started")
         if self._next_object_idx >= len(OBJECT_NAMES):
             self.get_logger().warn("no objects left to pick")
-            return ok
+            return False
         name = OBJECT_NAMES[self._next_object_idx]
+        self.get_logger().info(f"PICK target {name} pose={pose}")
+
+        arm_ok = True
+        arm_ok &= self._send_gripper(self.g_open, "open gripper")
+        arm_ok &= self._send_joints(self.reach, "reach")
+        arm_ok &= self._send_joints(self.lower, "lower")
+        arm_ok &= self._send_gripper(self.g_close, "close gripper")
+        arm_ok &= self._send_joints(self.carry, "carry")
+        if not arm_ok:
+            self.get_logger().warn("arm_controller trajectory incomplete (continuing with teleport)")
+
         self._next_object_idx += 1
         self._held_object = name
+        tp_ok = True
         if pose is not None:
             ox, oy, oz = pose
             side = -0.03 if name == OBJECT_NAMES[0] else 0.03
-            self._teleport(name, ox + side, oy, oz)
+            tp_ok &= self._teleport(name, ox + side, oy, oz)
             time.sleep(0.2)
-        self._teleport(name, 0.0, 0.0, STOW_Z)
-        self.get_logger().info(f"carrying {name}")
-        return ok
+        tp_ok &= self._teleport(name, 0.0, 0.0, STOW_Z)
+        if tp_ok:
+            self.get_logger().info(f"carrying {name} (teleport to stow ok)")
+        else:
+            self.get_logger().error(f"PICK teleport failed for {name}")
+        return tp_ok or arm_ok
 
     def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
-        self.get_logger().info(f"ARM: PLACE (target={pose})")
-        ok = True
-        ok &= self._send_joints(self.reach, "reach over target")
-        ok &= self._send_joints(self.lower, "lower")
-        ok &= self._send_gripper(self.g_open, "release")
-        ok &= self._send_joints(self.home, "home")
+        self.get_logger().info(f"PLACE started target={pose} held={self._held_object}")
+        arm_ok = True
+        arm_ok &= self._send_joints(self.reach, "reach over target")
+        arm_ok &= self._send_joints(self.lower, "lower")
+        arm_ok &= self._send_gripper(self.g_open, "release")
+        arm_ok &= self._send_joints(self.home, "home")
+        if not arm_ok:
+            self.get_logger().warn("arm_controller PLACE trajectory incomplete")
+
+        tp_ok = True
         if self._held_object and pose is not None:
             x, y, z = pose
             off = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
-            self._teleport(self._held_object, x + off, y, max(z, 0.10))
-            self.get_logger().info(
-                f"dropped {self._held_object} at ({x + off:.2f}, {y:.2f})"
-            )
+            tp_ok = self._teleport(self._held_object, x + off, y, max(z, 0.10))
+            if tp_ok:
+                self.get_logger().info(
+                    f"teleport {self._held_object} -> ({x + off:.2f}, {y:.2f}, {max(z, 0.10):.2f})"
+                )
             self._held_object = None
-        return ok
+        return tp_ok or arm_ok
 
     def _teleport(self, name: str, x: float, y: float, z: float) -> bool:
         if self._gz_cli is None:
@@ -216,7 +230,10 @@ class ManipulatorControllerNode(Node):
         req.state.pose.orientation.w = 1.0
         req.state.reference_frame = "world"
         future = self._gz_cli.call_async(req)
-        return self._await_future(future, timeout=5.0, label=f"tp {name}")
+        ok = self._await_future(future, timeout=5.0, label=f"tp {name}")
+        if ok:
+            self.get_logger().info(f"Gazebo teleport {name} -> ({x:.2f}, {y:.2f}, {z:.2f})")
+        return ok
 
     def _send_joints(self, positions: List[float], label: str) -> bool:
         self.get_logger().info(f"joints {label}: {positions}")
@@ -288,6 +305,7 @@ class ManipulatorControllerNode(Node):
         return False
 
     def _report(self, cmd: str, ok: bool, reason: str = "") -> None:
+        self.get_logger().info(f"arm_status {cmd} ok={ok}" + (f" ({reason})" if reason else ""))
         self.status_pub.publish(String(data=json.dumps({
             "cmd": cmd, "ok": ok, "reason": reason,
         })))
