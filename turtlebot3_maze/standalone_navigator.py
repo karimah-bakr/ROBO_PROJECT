@@ -169,7 +169,7 @@ class MazeMissionNavigator(Node):
     SCAN_MIN_RANGE = 0.12   # ignore closer returns (arm / noise)
     MIN_FWD_BEFORE_LIDAR_ABORT = 0.22  # must drive ~half a cell before lidar can abort
     SENSOR_WARMUP_ODOM = 2
-    SENSOR_WARMUP_SCAN = 1
+    SENSOR_WARMUP_SCAN = 0   # odom only; /scan optional for navigation
 
     def __init__(self) -> None:
         super().__init__("maze_mission_navigator")
@@ -181,9 +181,11 @@ class MazeMissionNavigator(Node):
             history=HistoryPolicy.KEEP_LAST,
         )
 
-        # publishers
+        # publishers — ros2_control diff_drive uses cmd_vel_unstamped in its namespace
         self.cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
-        # diff_drive_controller listens on /cmd_vel when spawned via ros2_control
+        self.cmd_pub_dd = self.create_publisher(
+            Twist, "/diff_drive_controller/cmd_vel_unstamped", 10,
+        )
         self.arm_pub = self.create_publisher(String, "/arm_command", 10)
 
         # subscribers
@@ -257,10 +259,21 @@ class MazeMissionNavigator(Node):
         return math.hypot(self.x - cx, self.y - cy) < self.CELL_ARRIVE_TOL_M
 
     def _sensors_ready(self) -> bool:
-        return (
-            self._odom_count >= self.SENSOR_WARMUP_ODOM
-            and self._scan_count >= self.SENSOR_WARMUP_SCAN
-        )
+        return self._odom_count >= self.SENSOR_WARMUP_ODOM
+
+    def _heading_from_yaw(self, yaw: float) -> str:
+        best_h = self.heading
+        best_err = float("inf")
+        for h in HEADINGS:
+            err = abs(wrap(YAW[h] - yaw))
+            if err < best_err:
+                best_err = err
+                best_h = h
+        return best_h
+
+    def _publish_twist(self, twist: Twist) -> None:
+        self.cmd_pub.publish(twist)
+        self.cmd_pub_dd.publish(twist)
 
     def _lidar_active(self) -> bool:
         return time.monotonic() >= self._lidar_disabled_until
@@ -290,10 +303,20 @@ class MazeMissionNavigator(Node):
             if math.isfinite(self.front_dist)
             else "inf"
         )
+        if not self.have_odom or not self._sensors_ready():
+            state = "WAIT_ODOM"
+        elif self.arm_busy:
+            state = "ARM_BUSY"
+        elif self.motion is not None:
+            state = f"MOTION_{self.motion.get('type', '?')}"
+        elif self.step_queue:
+            state = "DRIVE_QUEUE"
+        else:
+            state = "PLAN"
         self.get_logger().info(
-            f"hb: cell={self.cell} heading={self.heading} step={kind} "
+            f"hb: cell={self.cell} heading={self.heading} step={kind} state={state} "
             f"odom={self._odom_count} scan={self._scan_count} front={front} "
-            f"queue={len(self.step_queue)} motion={self.motion is not None}"
+            f"queue={len(self.step_queue)}"
         )
 
     # -------------------------------------------------------------------------
@@ -312,7 +335,12 @@ class MazeMissionNavigator(Node):
         self._odom_count += 1
         if not self._cell_synced and self._odom_count >= self.SENSOR_WARMUP_ODOM:
             self._sync_cell_from_odom()
+            self.heading = self._heading_from_yaw(self.yaw)
             self._cell_synced = True
+            self.get_logger().info(
+                f"odom init: pos=({self.x:.2f},{self.y:.2f}) yaw={self.yaw:.2f} "
+                f"-> cell={self.cell} heading={self.heading}"
+            )
 
     def _on_scan(self, msg: LaserScan) -> None:
         self._scan_count += 1
@@ -349,7 +377,7 @@ class MazeMissionNavigator(Node):
     # -------------------------------------------------------------------------
 
     def _stop(self) -> None:
-        self.cmd_pub.publish(Twist())
+        self._publish_twist(Twist())
 
     def _tick(self) -> None:
         if not self.have_odom:
@@ -360,11 +388,9 @@ class MazeMissionNavigator(Node):
         if not self._sensors_ready():
             if not self._waiting_logged:
                 self.get_logger().warn(
-                    f"waiting for sensors — need odom>={self.SENSOR_WARMUP_ODOM} "
-                    f"scan>={self.SENSOR_WARMUP_SCAN}; "
-                    f"got odom={self._odom_count} scan={self._scan_count}. "
-                    f"If odom stays 0: check /cmd_vel driver (diff_drive plugin or "
-                    f"diff_drive_controller). Run: ros2 topic list | grep odom"
+                    f"waiting for /odom (need >={self.SENSOR_WARMUP_ODOM} msgs, "
+                    f"got {self._odom_count}). Check: ros2 topic echo /odom --once "
+                    f"or /diff_drive_controller/odom --once"
                 )
                 self._waiting_logged = True
             return
@@ -431,6 +457,7 @@ class MazeMissionNavigator(Node):
                 f"plan {self.cell}->{goal}: {len(steps)} steps via {cells}"
             )
             self.step_queue = steps
+            self._start_next_step()
             return
 
         if kind == "pick":
@@ -486,7 +513,7 @@ class MazeMissionNavigator(Node):
                 self._stop()
                 return True
             twist.angular.z = self.ANG_SPEED if err > 0 else -self.ANG_SPEED
-            self.cmd_pub.publish(twist)
+            self._publish_twist(twist)
             return False
 
         # forward
@@ -524,7 +551,7 @@ class MazeMissionNavigator(Node):
         yaw_err = wrap(YAW[self.heading] - self.yaw)
         twist.linear.x = speed
         twist.angular.z = max(-0.4, min(0.4, 1.5 * yaw_err))
-        self.cmd_pub.publish(twist)
+        self._publish_twist(twist)
         return False
 
     def _motion_done(self) -> None:
@@ -595,6 +622,7 @@ class MazeMissionNavigator(Node):
                 self.script_i = len(self.script)
                 return
             self.step_queue = cells_to_steps(cells)
+            self._start_next_step()
             return
         if self.arm_busy:
             return
