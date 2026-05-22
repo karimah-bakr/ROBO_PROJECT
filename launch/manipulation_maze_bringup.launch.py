@@ -6,15 +6,13 @@ Same as upstream ``base.launch.py`` + ``gazebo.launch.py``, but:
   - always spawns diff_drive_controller in simulation
 """
 
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -43,7 +41,10 @@ def generate_launch_description() -> LaunchDescription:
     robot_state_pub = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
-        parameters=[{"robot_description": urdf_file, "use_sim_time": use_sim}],
+        parameters=[{
+            "robot_description": ParameterValue(urdf_file, value_type=str),
+            "use_sim_time": use_sim,
+        }],
         output="screen",
     )
 
