@@ -92,10 +92,10 @@ def object_model(name: str, x: float, y: float, rgb: Tuple[float, float, float])
           <mass>0.05</mass>
           <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.05 0.05 0.22</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.02 0.03 0.2</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>{r} {g} {b} 1</ambient><diffuse>{r} {g} {b} 1</diffuse></material>
-          <geometry><box><size>0.05 0.05 0.22</size></box></geometry>
+          <geometry><box><size>0.02 0.03 0.2</size></box></geometry>
         </visual>
       </link>
     </model>
