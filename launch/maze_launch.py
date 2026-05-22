@@ -151,7 +151,7 @@ def generate_launch_description() -> LaunchDescription:
         gzclient,
         manip_base,
         TimerAction(period=4.0, actions=[spawn_robot]),
-        TimerAction(period=6.0, actions=[lidar, mapper, planner, arm]),
-        TimerAction(period=8.0, actions=[navigator]),
+        TimerAction(period=8.0, actions=[lidar, mapper, planner, arm]),
+        TimerAction(period=10.0, actions=[navigator]),
         TimerAction(period=2.0, actions=[rviz]),
     ])

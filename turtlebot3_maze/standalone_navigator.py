@@ -106,6 +106,19 @@ def neighbours(r: int, c: int):
             yield (nr, nc), d
 
 
+def reachable_cells(from_cell: Tuple[int, int]) -> set:
+    """All grid cells reachable from *from_cell* via cardinal moves."""
+    seen = {from_cell}
+    q = deque([from_cell])
+    while q:
+        cur = q.popleft()
+        for nb, _ in neighbours(*cur):
+            if nb not in seen:
+                seen.add(nb)
+                q.append(nb)
+    return seen
+
+
 def bfs(start: Tuple[int, int], goal: Tuple[int, int]) -> Optional[List[Tuple[int, int]]]:
     if start == goal:
         return [start]
@@ -246,6 +259,7 @@ class MazeMissionNavigator(Node):
         self._goto_goal: Optional[Tuple[int, int]] = None
         # current low-level motion: None | {"type":"turn"|"forward", ...}
         self.motion: Optional[dict] = None
+        self._reachable = reachable_cells(START_CELL)
 
         # logging guards
         self._waiting_logged = False
@@ -262,8 +276,37 @@ class MazeMissionNavigator(Node):
     def _at_goal_cell(self, goal: Tuple[int, int]) -> bool:
         return dist_to_cell_center(self.x, self.y, goal) <= self.goal_arrival_tol
 
+    def _nearest_reachable_cell(self, hint: Tuple[int, int]) -> Tuple[int, int]:
+        if hint in self._reachable:
+            return hint
+        return min(
+            self._reachable,
+            key=lambda c: dist_to_cell_center(self.x, self.y, c),
+        )
+
     def _sync_cell_from_odom(self) -> None:
-        self.cell = world_to_cell(self.x, self.y)
+        raw = world_to_cell(self.x, self.y)
+        if raw not in self._reachable:
+            corrected = self._nearest_reachable_cell(raw)
+            if corrected != self.cell:
+                self.get_logger().warn(
+                    f"odom cell {raw} unreachable; snapped to {corrected}"
+                )
+            self.cell = corrected
+            return
+        nb_cells = [nb for nb, _ in neighbours(*self.cell)]
+        if raw in nb_cells:
+            self.cell = raw
+            return
+        if nb_cells:
+            best = min(nb_cells, key=lambda c: dist_to_cell_center(self.x, self.y, c))
+            if dist_to_cell_center(self.x, self.y, best) < CELL * 0.45:
+                self.cell = best
+                return
+        self.cell = self._nearest_reachable_cell(raw)
+
+    def _arm_joint1(self) -> float:
+        return YAW[self.heading]
 
     def _heartbeat(self) -> None:
         kind = self.script[self.script_i][0] if self.script_i < len(self.script) else "idle"
@@ -369,10 +412,24 @@ class MazeMissionNavigator(Node):
                 self.script_i += 1
                 return
             self._goto_goal = goal
+            start = self._nearest_reachable_cell(self.cell)
+            if start != self.cell:
+                self.get_logger().warn(
+                    f"re-localized for planning: {self.cell} -> {start}"
+                )
+                self.cell = start
             cells = bfs(self.cell, goal)
             if not cells:
-                self.get_logger().error(f"no path {self.cell} -> {goal}; aborting")
-                self.script_i = len(self.script)
+                self.get_logger().error(
+                    f"no path {self.cell} -> {goal}; re-sync and retry"
+                )
+                self.cell = self._nearest_reachable_cell(world_to_cell(self.x, self.y))
+                cells = bfs(self.cell, goal)
+            if not cells:
+                self.get_logger().error(
+                    f"still no path {self.cell} -> {goal}; skipping goto step"
+                )
+                self.script_i += 1
                 return
             steps = cells_to_steps(cells)
             self.get_logger().info(
@@ -386,7 +443,11 @@ class MazeMissionNavigator(Node):
             self._arm_step(
                 "pick",
                 must_be_at=OBJECT_CELL,
-                payload={"cmd": "PICK", "x": ox, "y": oy, "z": 0.10},
+                payload={
+                    "cmd": "PICK",
+                    "x": ox, "y": oy, "z": 0.10,
+                    "joint1": self._arm_joint1(),
+                },
             )
             return
 
@@ -395,7 +456,10 @@ class MazeMissionNavigator(Node):
             self._arm_step(
                 "place",
                 must_be_at=TARGET_CELL,
-                payload={"cmd": "PLACE", "x": x, "y": y, "z": z},
+                payload={
+                    "cmd": "PLACE", "x": x, "y": y, "z": z,
+                    "joint1": self._arm_joint1(),
+                },
             )
             return
 
@@ -497,10 +561,15 @@ class MazeMissionNavigator(Node):
                     f"forward aborted but within {self.goal_arrival_tol:.2f}m of "
                     f"goal {goal_cell} — treating as arrived"
                 )
-                self.cell = world_to_cell(self.x, self.y)
+                self.cell = self._nearest_reachable_cell(
+                    world_to_cell(self.x, self.y)
+                )
                 self._goto_goal = None
                 self.step_queue.clear()
                 return
+            self.cell = self._nearest_reachable_cell(
+                world_to_cell(self.x, self.y)
+            )
             self.get_logger().warn("forward aborted; re-planning from current cell")
             self.step_queue.clear()
             return
@@ -517,15 +586,18 @@ class MazeMissionNavigator(Node):
         payload: dict,
     ) -> None:
         if self.cell != must_be_at and not self._at_goal_cell(must_be_at):
+            self.cell = self._nearest_reachable_cell(self.cell)
             cells = bfs(self.cell, must_be_at)
             if not cells:
-                self.get_logger().error(f"no path to {must_be_at} for {label}")
-                self.script_i = len(self.script)
+                self.get_logger().error(
+                    f"no path to {must_be_at} for {label}; skip step"
+                )
+                self.script_i += 1
                 return
             self._goto_goal = must_be_at
             self.step_queue = cells_to_steps(cells)
             return
-        self.cell = world_to_cell(self.x, self.y)
+        self.cell = self._nearest_reachable_cell(world_to_cell(self.x, self.y))
         if self.arm_busy:
             return
         if self.arm_last_ok is None:

@@ -1,8 +1,8 @@
 """OpenManipulator-X controller for TurtleBot3 manipulation (Gazebo / hardware).
 
 /arm_command  JSON or plain text:
-    {"cmd": "PICK",  "x": 0.25, "y": 2.25, "z": 0.1}
-    {"cmd": "PLACE", "x": 3.25, "y": 0.25, "z": 0.1}
+    {"cmd": "PICK",  "x": 0.25, "y": 2.25, "z": 0.1, "joint1": 3.14}
+    {"cmd": "PLACE", "x": 3.25, "y": 0.25, "z": 0.1, "joint1": 0.0}
     "HOME"
 
 /arm_status   {"cmd": "...", "ok": true|false, "reason": "..."}
@@ -56,6 +56,10 @@ OBJECT_NAMES = ("object_1", "object_2")
 STOW_Z = -2.0
 ARM_ACTION = "/arm_controller/follow_joint_trajectory"
 GRIPPER_ACTION = "/gripper_controller/gripper_cmd"
+GZ_SERVICE_NAMES = (
+    "/gazebo/set_entity_state",
+    "/set_entity_state",
+)
 
 
 class ManipulatorControllerNode(Node):
@@ -63,12 +67,14 @@ class ManipulatorControllerNode(Node):
         super().__init__("manipulator_controller")
 
         self.declare_parameter("home_joints",  [0.0, -1.05,  0.35,  0.70])
-        self.declare_parameter("reach_joints", [0.0,  0.20,  0.30, -0.50])
-        self.declare_parameter("lower_joints", [0.0,  0.60,  0.10, -0.70])
-        self.declare_parameter("carry_joints", [0.0, -0.90,  0.30,  0.60])
+        self.declare_parameter("reach_joints", [0.0, -0.35,  0.25, -0.55])
+        self.declare_parameter("lower_joints", [0.0, -0.85,  0.15, -0.65])
+        self.declare_parameter("carry_joints", [0.0, -0.95,  0.25,  0.55])
         self.declare_parameter("gripper_open",  0.044)
         self.declare_parameter("gripper_close", 0.010)
         self.declare_parameter("step_wait_s",   1.5)
+        self.declare_parameter("require_gazebo_teleport", True)
+        self.declare_parameter("gazebo_service_wait_s", 15.0)
 
         self.home = list(self.get_parameter("home_joints").value)
         self.reach = list(self.get_parameter("reach_joints").value)
@@ -77,6 +83,8 @@ class ManipulatorControllerNode(Node):
         self.g_open = float(self.get_parameter("gripper_open").value)
         self.g_close = float(self.get_parameter("gripper_close").value)
         self.step_wait = float(self.get_parameter("step_wait_s").value)
+        self.require_tp = bool(self.get_parameter("require_gazebo_teleport").value)
+        self._gz_wait = float(self.get_parameter("gazebo_service_wait_s").value)
 
         self.cmd_sub = self.create_subscription(String, "/arm_command", self._on_cmd, 5)
         self.status_pub = self.create_publisher(String, "/arm_status", 10)
@@ -98,21 +106,40 @@ class ManipulatorControllerNode(Node):
             self._gripper_action = ActionClient(self, GripperCommand, GRIPPER_ACTION)
 
         self._gz_cli = None
-        if HAVE_GZ:
-            self._gz_cli = self.create_client(SetEntityState, "/gazebo/set_entity_state")
+        self._gz_service_name = ""
+        self._init_gazebo_client()
 
         self._next_object_idx = 0
         self._held_object: Optional[str] = None
         self._busy = threading.Lock()
+        self._pending_joint1: Optional[float] = None
 
         self.get_logger().info(
             "manipulator_controller ready "
-            f"(open_manipulator={HAVE_OM}, ros2_control={HAVE_RC}, gazebo_tp={HAVE_GZ})"
+            f"(open_manipulator={HAVE_OM}, ros2_control={HAVE_RC}, "
+            f"gazebo_tp={self._gz_cli is not None}, "
+            f"gz_svc={self._gz_service_name or 'none'})"
+        )
+
+    def _init_gazebo_client(self) -> None:
+        if not HAVE_GZ:
+            return
+        for name in GZ_SERVICE_NAMES:
+            cli = self.create_client(SetEntityState, name)
+            if cli.wait_for_service(timeout_sec=self._gz_wait):
+                self._gz_cli = cli
+                self._gz_service_name = name
+                self.get_logger().info(f"using Gazebo service {name}")
+                return
+        self.get_logger().warn(
+            f"set_entity_state not found (tried {GZ_SERVICE_NAMES}); "
+            "object teleport disabled until gzserver is up"
         )
 
     def _on_cmd(self, msg: String) -> None:
         raw = (msg.data or "").strip()
         world_pose: Optional[Tuple[float, float, float]] = None
+        joint1: Optional[float] = None
         if raw.startswith("{"):
             try:
                 data = json.loads(raw)
@@ -120,6 +147,11 @@ class ManipulatorControllerNode(Node):
                 self._report("?", ok=False, reason=f"bad JSON: {exc}")
                 return
             cmd = str(data.get("cmd", "")).upper()
+            if "joint1" in data:
+                try:
+                    joint1 = float(data["joint1"])
+                except (TypeError, ValueError):
+                    pass
             if "x" in data and "y" in data:
                 try:
                     world_pose = (
@@ -136,6 +168,7 @@ class ManipulatorControllerNode(Node):
         if cmd not in ("PICK", "PLACE", "HOME"):
             self._report(cmd, ok=False, reason="unknown command")
             return
+        self._pending_joint1 = joint1
         threading.Thread(
             target=self._run_sequence, args=(cmd, world_pose), daemon=True,
         ).start()
@@ -160,7 +193,14 @@ class ManipulatorControllerNode(Node):
             self.get_logger().error(f"arm sequence {cmd} failed: {exc}")
             self._report(cmd, ok=False, reason=str(exc))
         finally:
+            self._pending_joint1 = None
             self._busy.release()
+
+    def _with_joint1(self, base: List[float], joint1: Optional[float]) -> List[float]:
+        pose = list(base)
+        if joint1 is not None:
+            pose[0] = float(joint1)
+        return pose
 
     def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
         self.get_logger().info("PICK started")
@@ -168,19 +208,58 @@ class ManipulatorControllerNode(Node):
             self.get_logger().warn("no objects left to pick")
             return False
         name = OBJECT_NAMES[self._next_object_idx]
-        self.get_logger().info(f"PICK target {name} pose={pose}")
+        j1 = self._pending_joint1
+        self.get_logger().info(f"PICK target {name} pose={pose} joint1={j1}")
+
+        reach = self._with_joint1(self.reach, j1)
+        lower = self._with_joint1(self.lower, j1)
+        carry = self._with_joint1(self.carry, j1)
 
         arm_ok = True
         arm_ok &= self._send_gripper(self.g_open, "open gripper")
-        arm_ok &= self._send_joints(self.reach, "reach")
-        arm_ok &= self._send_joints(self.lower, "lower")
+        arm_ok &= self._send_joints(reach, "reach")
+        arm_ok &= self._send_joints(lower, "lower")
         arm_ok &= self._send_gripper(self.g_close, "close gripper")
-        arm_ok &= self._send_joints(self.carry, "carry")
+        arm_ok &= self._send_joints(carry, "carry")
         if not arm_ok:
-            self.get_logger().warn("arm_controller trajectory incomplete (continuing with teleport)")
+            self.get_logger().warn("arm_controller trajectory incomplete")
 
         self._next_object_idx += 1
         self._held_object = name
+        tp_ok = self._teleport_object(name, pose)
+        self._send_joints(self.home, "home after pick")
+        return self._pick_place_ok(tp_ok, arm_ok)
+
+    def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
+        self.get_logger().info(f"PLACE started target={pose} held={self._held_object}")
+        j1 = self._pending_joint1
+        reach = self._with_joint1(self.reach, j1)
+        lower = self._with_joint1(self.lower, j1)
+
+        arm_ok = True
+        arm_ok &= self._send_joints(reach, "reach over target")
+        arm_ok &= self._send_joints(lower, "lower")
+        arm_ok &= self._send_gripper(self.g_open, "release")
+        arm_ok &= self._send_joints(self.home, "home")
+
+        tp_ok = True
+        if self._held_object and pose is not None:
+            x, y, z = pose
+            off = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
+            tp_ok = self._teleport(self._held_object, x + off, y, max(z, 0.10))
+            if tp_ok:
+                self.get_logger().info(
+                    f"teleport {self._held_object} -> "
+                    f"({x + off:.2f}, {y:.2f}, {max(z, 0.10):.2f})"
+                )
+            self._held_object = None
+        return self._pick_place_ok(tp_ok, arm_ok)
+
+    def _teleport_object(
+        self, name: str, pose: Optional[Tuple[float, float, float]],
+    ) -> bool:
+        if self._gz_cli is None:
+            self._init_gazebo_client()
         tp_ok = True
         if pose is not None:
             ox, oy, oz = pose
@@ -192,36 +271,26 @@ class ManipulatorControllerNode(Node):
             self.get_logger().info(f"carrying {name} (teleport to stow ok)")
         else:
             self.get_logger().error(f"PICK teleport failed for {name}")
-        return tp_ok or arm_ok
+        return tp_ok
 
-    def _place(self, pose: Optional[Tuple[float, float, float]]) -> bool:
-        self.get_logger().info(f"PLACE started target={pose} held={self._held_object}")
-        arm_ok = True
-        arm_ok &= self._send_joints(self.reach, "reach over target")
-        arm_ok &= self._send_joints(self.lower, "lower")
-        arm_ok &= self._send_gripper(self.g_open, "release")
-        arm_ok &= self._send_joints(self.home, "home")
-        if not arm_ok:
-            self.get_logger().warn("arm_controller PLACE trajectory incomplete")
-
-        tp_ok = True
-        if self._held_object and pose is not None:
-            x, y, z = pose
-            off = -0.04 if self._held_object == OBJECT_NAMES[0] else 0.04
-            tp_ok = self._teleport(self._held_object, x + off, y, max(z, 0.10))
-            if tp_ok:
-                self.get_logger().info(
-                    f"teleport {self._held_object} -> ({x + off:.2f}, {y:.2f}, {max(z, 0.10):.2f})"
-                )
-            self._held_object = None
-        return tp_ok or arm_ok
+    def _pick_place_ok(self, tp_ok: bool, arm_ok: bool) -> bool:
+        if self._gz_cli is not None:
+            return tp_ok
+        return arm_ok
 
     def _teleport(self, name: str, x: float, y: float, z: float) -> bool:
         if self._gz_cli is None:
-            return True
-        if not self._gz_cli.wait_for_service(timeout_sec=3.0):
-            self.get_logger().warn("set_entity_state unavailable")
-            return False
+            if self.require_tp:
+                self.get_logger().warn("set_entity_state unavailable — retrying")
+                self._init_gazebo_client()
+            if self._gz_cli is None:
+                return not self.require_tp
+        if not self._gz_cli.service_is_ready():
+            if not self._gz_cli.wait_for_service(timeout_sec=5.0):
+                self.get_logger().warn(
+                    f"{self._gz_service_name} not ready for {name}"
+                )
+                return False
         req = SetEntityState.Request()
         req.state.name = name
         req.state.pose.position.x = float(x)
@@ -232,7 +301,9 @@ class ManipulatorControllerNode(Node):
         future = self._gz_cli.call_async(req)
         ok = self._await_future(future, timeout=5.0, label=f"tp {name}")
         if ok:
-            self.get_logger().info(f"Gazebo teleport {name} -> ({x:.2f}, {y:.2f}, {z:.2f})")
+            self.get_logger().info(
+                f"Gazebo teleport {name} -> ({x:.2f}, {y:.2f}, {z:.2f})"
+            )
         return ok
 
     def _send_joints(self, positions: List[float], label: str) -> bool:
@@ -305,7 +376,9 @@ class ManipulatorControllerNode(Node):
         return False
 
     def _report(self, cmd: str, ok: bool, reason: str = "") -> None:
-        self.get_logger().info(f"arm_status {cmd} ok={ok}" + (f" ({reason})" if reason else ""))
+        self.get_logger().info(
+            f"arm_status {cmd} ok={ok}" + (f" ({reason})" if reason else "")
+        )
         self.status_pub.publish(String(data=json.dumps({
             "cmd": cmd, "ok": ok, "reason": reason,
         })))
