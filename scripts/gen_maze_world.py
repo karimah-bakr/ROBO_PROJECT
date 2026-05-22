@@ -183,6 +183,9 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
     for y in range(N + 1):
         for x in range(N):
             if H_WALLS[y][x]:
+                # South-boundary entrances (cols 1, 4, 7) at y=0.
+                if y == 0 and x in (0, 3, 6):
+                    continue
                 cx = (x + 0.5) * CELL
                 cy = y * CELL
                 parts.append(model_box(f"h_{wall_count}", cx, cy, CELL, WALL_T))
