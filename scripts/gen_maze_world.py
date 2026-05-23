@@ -211,11 +211,12 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
                 wall_count += 1
 
     # Place both cubes side-by-side along the Y axis so they're
-    # perpendicular to the robot's approach from the east. With 25mm
-    # cubes 15mm off-centre on each side they just touch in the middle.
+    # perpendicular to the robot's approach from the east. 25mm off-
+    # centre on each side leaves a ~2cm visible gap between the 3cm-
+    # wide cubes (close enough that the gripper still reaches each).
     base_x, base_y = _cell_center(*obj)
-    parts.append(object_model("object_1", base_x, base_y - 0.015, (1.0, 0.0, 0.0)))
-    parts.append(object_model("object_2", base_x, base_y + 0.015, (0.0, 0.0, 1.0)))
+    parts.append(object_model("object_1", base_x, base_y - 0.025, (1.0, 0.0, 0.0)))
+    parts.append(object_model("object_2", base_x, base_y + 0.025, (0.0, 0.0, 1.0)))
 
     parts.append("  </world>\n</sdf>\n")
     return "".join(parts), wall_count
