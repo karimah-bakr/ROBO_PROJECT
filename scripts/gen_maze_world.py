@@ -211,13 +211,14 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
                 wall_count += 1
 
     # Place the two cubes one behind the other along the X axis (the
-    # robot's east-to-west approach line). object_1 is closer to the
-    # robot (east) and is picked first; object_2 is deeper into the
-    # cell (west) and picked second. 20cm centre-to-centre keeps
-    # picks isolated.
+    # robot's east-to-west approach line), well clear of the east cell
+    # boundary so the LIDAR doesn't catch a cube and abort the forward
+    # leg. object_1 sits at -5cm (nearer cube, picked first);
+    # object_2 at -20cm (deeper cube, picked second). 15cm centre-to-
+    # centre keeps picks isolated.
     base_x, base_y = _cell_center(*obj)
-    parts.append(object_model("object_1", base_x + 0.10, base_y, (1.0, 0.0, 0.0)))
-    parts.append(object_model("object_2", base_x - 0.10, base_y, (0.0, 0.0, 1.0)))
+    parts.append(object_model("object_1", base_x - 0.05, base_y, (1.0, 0.0, 0.0)))
+    parts.append(object_model("object_2", base_x - 0.20, base_y, (0.0, 0.0, 1.0)))
 
     parts.append("  </world>\n</sdf>\n")
     return "".join(parts), wall_count

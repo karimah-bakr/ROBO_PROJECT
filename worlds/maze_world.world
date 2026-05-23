@@ -1216,13 +1216,14 @@
 
     <!-- Project-spec cubes: 2cm × 3cm × 20cm. Placed one behind the
          other along the X axis (the robot's east-to-west approach
-         direction) in cell (5,1). object_1 sits closer to the robot
-         (east edge of the cell) and is picked first; object_2 is
-         deeper in the cell and picked second after object_1 is gone.
-         20cm centre-to-centre keeps the picks well isolated. -->
+         line) in cell (5,1), well clear of the east cell boundary so
+         the robot can creep into position without the LIDAR seeing a
+         cube and aborting the forward leg. object_1 is the nearer
+         cube and picked first; object_2 is deeper and picked second.
+         15cm centre-to-centre keeps the picks isolated. -->
     <model name="object_1">
       <static>false</static>
-      <pose>0.350 2.250 0.100 0 0 0</pose>
+      <pose>0.200 2.250 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
@@ -1238,7 +1239,7 @@
 
     <model name="object_2">
       <static>false</static>
-      <pose>0.150 2.250 0.100 0 0 0</pose>
+      <pose>0.050 2.250 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
