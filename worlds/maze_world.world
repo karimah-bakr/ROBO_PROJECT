@@ -1221,7 +1221,7 @@
          physical grasp can actually close around the cube. -->
     <model name="object_1">
       <static>false</static>
-      <pose>0.250 2.225 0.100 0 0 0</pose>
+      <pose>0.250 2.175 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
@@ -1237,7 +1237,7 @@
 
     <model name="object_2">
       <static>false</static>
-      <pose>0.250 2.275 0.100 0 0 0</pose>
+      <pose>0.250 2.325 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
