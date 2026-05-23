@@ -66,14 +66,16 @@ class ManipulatorControllerNode(Node):
     def __init__(self) -> None:
         super().__init__("manipulator_controller")
 
-        self.declare_parameter("home_joints",  [0.0, -1.05,  0.35,  0.70])
-        self.declare_parameter("reach_joints", [0.0,  0.50, -0.20,  0.00])
-        self.declare_parameter("lower_joints", [0.0,  0.55, -0.30,  0.00])
-        self.declare_parameter("carry_joints", [0.0, -0.95,  0.25,  0.55])
-        self.declare_parameter("gripper_open",  0.044)
-        self.declare_parameter("gripper_close", 0.010)
-        self.declare_parameter("step_wait_s",   1.5)
-        self.declare_parameter("joint1_align_wait_s", 2.5)
+        # Joint angles from the working course reference model. joint1 stays
+        # at 0 — chassis is already turned to face the cube by the navigator,
+        # so the arm reaches forward in the robot's local frame.
+        self.declare_parameter("home_joints",  [0.0,  0.0,  0.0,  0.0])
+        self.declare_parameter("reach_joints", [0.0,  0.6, -0.2, -0.4])
+        self.declare_parameter("lower_joints", [0.0,  0.9, -0.3, -0.5])
+        self.declare_parameter("carry_joints", [0.0,  0.0,  0.0,  0.0])
+        self.declare_parameter("gripper_open",  0.019)
+        self.declare_parameter("gripper_close", -0.019)
+        self.declare_parameter("step_wait_s",   4.0)
         self.declare_parameter("require_gazebo_teleport", True)
         self.declare_parameter("gazebo_service_wait_s", 15.0)
 
@@ -84,7 +86,6 @@ class ManipulatorControllerNode(Node):
         self.g_open = float(self.get_parameter("gripper_open").value)
         self.g_close = float(self.get_parameter("gripper_close").value)
         self.step_wait = float(self.get_parameter("step_wait_s").value)
-        self.joint1_align_wait = float(self.get_parameter("joint1_align_wait_s").value)
         self.require_tp = bool(self.get_parameter("require_gazebo_teleport").value)
         self._gz_wait = float(self.get_parameter("gazebo_service_wait_s").value)
 
@@ -204,12 +205,6 @@ class ManipulatorControllerNode(Node):
             pose[0] = float(joint1)
         return pose
 
-    def _align_joint1(self, joint1: float) -> bool:
-        pose = [float(joint1), self.home[1], self.home[2], self.home[3]]
-        return self._send_joints(
-            pose, "align joint1", path_time=self.joint1_align_wait,
-        )
-
     def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
         self.get_logger().info("PICK started")
         if self._next_object_idx >= len(OBJECT_NAMES):
@@ -224,8 +219,6 @@ class ManipulatorControllerNode(Node):
         carry = self._with_joint1(self.carry, j1)
 
         arm_ok = True
-        if j1 is not None and abs(float(j1) - self.home[0]) > 0.15:
-            arm_ok &= self._align_joint1(float(j1))
         arm_ok &= self._send_gripper(self.g_open, "open gripper")
         arm_ok &= self._send_joints(reach, "reach")
         arm_ok &= self._send_joints(lower, "lower")
@@ -247,8 +240,6 @@ class ManipulatorControllerNode(Node):
         lower = self._with_joint1(self.lower, j1)
 
         arm_ok = True
-        if j1 is not None and abs(float(j1) - self.home[0]) > 0.15:
-            arm_ok &= self._align_joint1(float(j1))
         arm_ok &= self._send_joints(reach, "reach over target")
         arm_ok &= self._send_joints(lower, "lower")
         arm_ok &= self._send_gripper(self.g_open, "release")

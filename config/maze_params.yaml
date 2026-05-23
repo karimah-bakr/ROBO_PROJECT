@@ -80,20 +80,20 @@ standalone_navigator:
 
 manipulator_controller:
   ros__parameters:
-    # OpenManipulator-X joint goals (radians); joint1 set per heading at runtime.
-    # reach/lower use positive θ_2 so the shoulder leans forward toward the
-    # cube; the earlier negative values kept the arm tilted back and the
-    # gripper never made it over the target.
-    home_joints:     [0.0, -1.05,  0.35,  0.70]
-    reach_joints:    [0.0,  0.50, -0.20,  0.00]
-    lower_joints:    [0.0,  0.55, -0.30,  0.00]
-    carry_joints:    [0.0, -0.95,  0.25,  0.55]
-    gripper_open:    0.044
-    gripper_close:   0.010
-    step_wait_s:     1.5
-    # Slower path_time used when rotating joint1 alone before reach,
-    # so the base swing from home (j1=0) to heading yaw (±π/2 or π)
-    # stays within joint velocity limits.
-    joint1_align_wait_s: 2.5
+    # OpenManipulator-X joint angles (radians). joint1 = 0 always: the
+    # chassis is rotated by the navigator to face the cube, so the arm
+    # reaches forward in the robot's local frame. Earlier attempts that
+    # overrode joint1 with the world yaw rotated the arm backward over
+    # the chassis (e.g. heading W → joint1=π → arm points east, opposite
+    # to the cube) — that's what made the gripper miss every time.
+    home_joints:     [0.0,  0.0,  0.0,  0.0]
+    reach_joints:    [0.0,  0.6, -0.2, -0.4]
+    lower_joints:    [0.0,  0.9, -0.3, -0.5]
+    carry_joints:    [0.0,  0.0,  0.0,  0.0]
+    # OM-X gripper joint range; close goes negative to squeeze.
+    gripper_open:     0.019
+    gripper_close:   -0.019
+    # Generous step time so ros2_control settles between poses.
+    step_wait_s:     4.0
     require_gazebo_teleport: true
     gazebo_service_wait_s: 15.0

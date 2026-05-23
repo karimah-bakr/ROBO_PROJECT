@@ -331,9 +331,6 @@ class MazeMissionNavigator(Node):
                 return
         self.cell = self._nearest_reachable_cell(raw)
 
-    def _arm_joint1(self) -> float:
-        return YAW[self.heading]
-
     def _pick_creep_heading(self) -> str:
         d = direction_between(self.pick_approach, OBJECT_CELL)
         return d if d is not None else self.pick_face
@@ -505,7 +502,6 @@ class MazeMissionNavigator(Node):
                 payload={
                     "cmd": "PICK",
                     "x": ox, "y": oy, "z": 0.10,
-                    "joint1": self._arm_joint1(),
                 },
             )
             return
@@ -517,7 +513,6 @@ class MazeMissionNavigator(Node):
                 must_be_at=TARGET_CELL,
                 payload={
                     "cmd": "PLACE", "x": x, "y": y, "z": z,
-                    "joint1": self._arm_joint1(),
                 },
             )
             return
