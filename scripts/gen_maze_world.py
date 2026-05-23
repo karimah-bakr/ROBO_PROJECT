@@ -82,20 +82,23 @@ def model_box(name: str, x: float, y: float, sx: float, sy: float, sz: float = W
 
 
 def object_model(name: str, x: float, y: float, rgb: Tuple[float, float, float]) -> str:
+    # 25mm cube — fits inside the OM-X gripper's 38mm finger gap so the
+    # physical grasp actually has something to close around. 60mm tall
+    # is short enough that the arm reaches over without colliding.
     r, g, b = rgb
     return f"""
     <model name="{name}">
       <static>false</static>
-      <pose>{x:.3f} {y:.3f} 0.1 0 0 0</pose>
+      <pose>{x:.3f} {y:.3f} 0.030 0 0 0</pose>
       <link name="link">
         <inertial>
-          <mass>0.05</mass>
-          <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <mass>0.02</mass>
+          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.02 0.03 0.2</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>{r} {g} {b} 1</ambient><diffuse>{r} {g} {b} 1</diffuse></material>
-          <geometry><box><size>0.02 0.03 0.2</size></box></geometry>
+          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
         </visual>
       </link>
     </model>
@@ -176,6 +179,15 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
     </scene>
     <include><uri>model://ground_plane</uri></include>
     <include><uri>model://sun</uri></include>
+
+    <!-- /gazebo/set_entity_state — used by manipulator_controller to
+         teleport picked cubes when the physical grasp slips. -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>1.0</update_rate>
+    </plugin>
 """
     )
 
@@ -199,9 +211,12 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
                 parts.append(model_box(f"v_{wall_count}", cx, cy, WALL_T, CELL))
                 wall_count += 1
 
+    # Place both cubes side-by-side along the Y axis so they're
+    # perpendicular to the robot's approach from the east. With 25mm
+    # cubes 15mm off-centre on each side they just touch in the middle.
     base_x, base_y = _cell_center(*obj)
-    parts.append(object_model("object_1", base_x - 0.03, base_y, (1.0, 0.0, 0.0)))
-    parts.append(object_model("object_2", base_x + 0.03, base_y, (0.0, 0.0, 1.0)))
+    parts.append(object_model("object_1", base_x, base_y - 0.015, (1.0, 0.0, 0.0)))
+    parts.append(object_model("object_2", base_x, base_y + 0.015, (0.0, 0.0, 1.0)))
 
     parts.append("  </world>\n</sdf>\n")
     return "".join(parts), wall_count

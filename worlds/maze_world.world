@@ -14,6 +14,16 @@
     <include><uri>model://ground_plane</uri></include>
     <include><uri>model://sun</uri></include>
 
+    <!-- /gazebo/set_entity_state — used by manipulator_controller to
+         teleport picked cubes (physical grasp on 25mm cubes is fragile,
+         so we fall back to teleport once the gripper closes). -->
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>1.0</update_rate>
+    </plugin>
+
     <model name="h_0">
       <static>true</static>
       <pose>0.750 0.000 0.100 0 0 0</pose>
@@ -1204,34 +1214,39 @@
       </link>
     </model>
 
+    <!-- Two 25mm cubes side-by-side along the Y axis (perpendicular to
+         the robot's pick approach from the east). 25mm fits well inside
+         the OM-X gripper's 38mm finger gap, and the side-by-side
+         arrangement lets the arm grasp each cube without reaching past
+         the other. Centred in cell (5,1) which is world (0.25, 2.25). -->
     <model name="object_1">
       <static>false</static>
-      <pose>0.220 2.250 0.1 0 0 0</pose>
+      <pose>0.250 2.235 0.030 0 0 0</pose>
       <link name="link">
         <inertial>
-          <mass>0.05</mass>
-          <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <mass>0.02</mass>
+          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.05 0.05 0.22</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>1.0 0.0 0.0 1</ambient><diffuse>1.0 0.0 0.0 1</diffuse></material>
-          <geometry><box><size>0.05 0.05 0.22</size></box></geometry>
+          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
         </visual>
       </link>
     </model>
 
     <model name="object_2">
       <static>false</static>
-      <pose>0.280 2.250 0.1 0 0 0</pose>
+      <pose>0.250 2.265 0.030 0 0 0</pose>
       <link name="link">
         <inertial>
-          <mass>0.05</mass>
-          <inertia><ixx>1.7e-4</ixx><iyy>1.7e-4</iyy><izz>5e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <mass>0.02</mass>
+          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.05 0.05 0.22</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>0.0 0.0 1.0 1</ambient><diffuse>0.0 0.0 1.0 1</diffuse></material>
-          <geometry><box><size>0.05 0.05 0.22</size></box></geometry>
+          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
         </visual>
       </link>
     </model>
