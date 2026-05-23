@@ -210,13 +210,14 @@ def build_world(start: Tuple[int, int], target: Tuple[int, int], obj: Tuple[int,
                 parts.append(model_box(f"v_{wall_count}", cx, cy, WALL_T, CELL))
                 wall_count += 1
 
-    # Place both cubes side-by-side along the Y axis so they're
-    # perpendicular to the robot's approach from the east. 75mm off-
-    # centre on each side gives ~12cm gap between the 3cm-wide cubes
-    # so the arm motion for one cube can't knock the other over.
+    # Place the two cubes one behind the other along the X axis (the
+    # robot's east-to-west approach line). object_1 is closer to the
+    # robot (east) and is picked first; object_2 is deeper into the
+    # cell (west) and picked second. 20cm centre-to-centre keeps
+    # picks isolated.
     base_x, base_y = _cell_center(*obj)
-    parts.append(object_model("object_1", base_x, base_y - 0.075, (1.0, 0.0, 0.0)))
-    parts.append(object_model("object_2", base_x, base_y + 0.075, (0.0, 0.0, 1.0)))
+    parts.append(object_model("object_1", base_x + 0.10, base_y, (1.0, 0.0, 0.0)))
+    parts.append(object_model("object_2", base_x - 0.10, base_y, (0.0, 0.0, 1.0)))
 
     parts.append("  </world>\n</sdf>\n")
     return "".join(parts), wall_count

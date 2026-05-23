@@ -1214,14 +1214,15 @@
       </link>
     </model>
 
-    <!-- Project-spec cubes: 2cm × 3cm × 20cm. Placed side-by-side along
-         the Y axis (perpendicular to the robot's east-to-west approach)
-         in cell (5,1), centred at world (0.25, 2.25). 2cm × 3cm cross-
-         section fits inside the OM-X gripper's 38mm finger gap, so the
-         physical grasp can actually close around the cube. -->
+    <!-- Project-spec cubes: 2cm × 3cm × 20cm. Placed one behind the
+         other along the X axis (the robot's east-to-west approach
+         direction) in cell (5,1). object_1 sits closer to the robot
+         (east edge of the cell) and is picked first; object_2 is
+         deeper in the cell and picked second after object_1 is gone.
+         20cm centre-to-centre keeps the picks well isolated. -->
     <model name="object_1">
       <static>false</static>
-      <pose>0.250 2.175 0.100 0 0 0</pose>
+      <pose>0.350 2.250 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
@@ -1237,7 +1238,7 @@
 
     <model name="object_2">
       <static>false</static>
-      <pose>0.250 2.325 0.100 0 0 0</pose>
+      <pose>0.150 2.250 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
