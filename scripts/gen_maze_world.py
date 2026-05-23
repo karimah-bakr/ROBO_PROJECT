@@ -82,23 +82,22 @@ def model_box(name: str, x: float, y: float, sx: float, sy: float, sz: float = W
 
 
 def object_model(name: str, x: float, y: float, rgb: Tuple[float, float, float]) -> str:
-    # 25mm cube — fits inside the OM-X gripper's 38mm finger gap so the
-    # physical grasp actually has something to close around. 60mm tall
-    # is short enough that the arm reaches over without colliding.
+    # Project-spec cube: 2cm × 3cm × 20cm. The 2cm × 3cm cross-section
+    # fits inside the OM-X gripper's 38mm finger gap.
     r, g, b = rgb
     return f"""
     <model name="{name}">
       <static>false</static>
-      <pose>{x:.3f} {y:.3f} 0.030 0 0 0</pose>
+      <pose>{x:.3f} {y:.3f} 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
-          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <inertia><ixx>7e-5</ixx><iyy>7e-5</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.02 0.03 0.20</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>{r} {g} {b} 1</ambient><diffuse>{r} {g} {b} 1</diffuse></material>
-          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
+          <geometry><box><size>0.02 0.03 0.20</size></box></geometry>
         </visual>
       </link>
     </model>

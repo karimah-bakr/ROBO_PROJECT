@@ -1214,39 +1214,39 @@
       </link>
     </model>
 
-    <!-- Two 25mm cubes side-by-side along the Y axis (perpendicular to
-         the robot's pick approach from the east). 25mm fits well inside
-         the OM-X gripper's 38mm finger gap, and the side-by-side
-         arrangement lets the arm grasp each cube without reaching past
-         the other. Centred in cell (5,1) which is world (0.25, 2.25). -->
+    <!-- Project-spec cubes: 2cm × 3cm × 20cm. Placed side-by-side along
+         the Y axis (perpendicular to the robot's east-to-west approach)
+         in cell (5,1), centred at world (0.25, 2.25). 2cm × 3cm cross-
+         section fits inside the OM-X gripper's 38mm finger gap, so the
+         physical grasp can actually close around the cube. -->
     <model name="object_1">
       <static>false</static>
-      <pose>0.250 2.235 0.030 0 0 0</pose>
+      <pose>0.250 2.235 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
-          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <inertia><ixx>7e-5</ixx><iyy>7e-5</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.02 0.03 0.20</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>1.0 0.0 0.0 1</ambient><diffuse>1.0 0.0 0.0 1</diffuse></material>
-          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
+          <geometry><box><size>0.02 0.03 0.20</size></box></geometry>
         </visual>
       </link>
     </model>
 
     <model name="object_2">
       <static>false</static>
-      <pose>0.250 2.265 0.030 0 0 0</pose>
+      <pose>0.250 2.265 0.100 0 0 0</pose>
       <link name="link">
         <inertial>
           <mass>0.02</mass>
-          <inertia><ixx>2e-6</ixx><iyy>2e-6</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+          <inertia><ixx>7e-5</ixx><iyy>7e-5</iyy><izz>2e-6</izz><ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
         </inertial>
-        <collision name="col"><geometry><box><size>0.025 0.025 0.060</size></box></geometry></collision>
+        <collision name="col"><geometry><box><size>0.02 0.03 0.20</size></box></geometry></collision>
         <visual name="vis">
           <material><ambient>0.0 0.0 1.0 1</ambient><diffuse>0.0 0.0 1.0 1</diffuse></material>
-          <geometry><box><size>0.025 0.025 0.060</size></box></geometry>
+          <geometry><box><size>0.02 0.03 0.20</size></box></geometry>
         </visual>
       </link>
     </model>
