@@ -87,12 +87,6 @@ DC = {"N":  0, "S":  0, "E": 1, "W": -1}
 YAW = {"N": math.pi / 2, "S": -math.pi / 2, "E": 0.0, "W": math.pi}
 HEADINGS = ("N", "E", "S", "W")  # 90° clockwise
 
-# Per-pick joint1 offsets so the gripper aims at each cube individually.
-# Cubes are ±75mm off the cell-Y centre; at reach distance ~0.25m that
-# maps to ±atan(0.075/0.25) ≈ ±0.29 rad. Positive = robot's left (south
-# in world when facing W) = object_1. Negative = right (north) = object_2.
-PICK_JOINT1_OFFSETS = (0.29, -0.29)
-
 
 # =============================================================================
 # Maze helpers
@@ -231,7 +225,6 @@ class MazeMissionNavigator(Node):
         self.pick_creep_m = float(self.get_parameter("pick_creep_m").value)
         self._pick_creep_done = False
         self._pick_creep_script_i = -1
-        self._pick_index = 0  # increments after each successful pick
 
         # Gazebo publishes /odom as reliable; /scan as sensor (best effort).
         odom_qos = QoSProfile(
@@ -502,9 +495,6 @@ class MazeMissionNavigator(Node):
                 self._pick_creep_script_i = self.script_i
                 self._pick_creep_done = False
             ox, oy = cell_center(OBJECT_CELL)
-            j1 = PICK_JOINT1_OFFSETS[
-                min(self._pick_index, len(PICK_JOINT1_OFFSETS) - 1)
-            ]
             self._arm_step(
                 "pick",
                 must_be_at=self.pick_approach,
@@ -512,7 +502,6 @@ class MazeMissionNavigator(Node):
                 payload={
                     "cmd": "PICK",
                     "x": ox, "y": oy, "z": 0.10,
-                    "joint1": j1,
                 },
             )
             return
@@ -702,8 +691,6 @@ class MazeMissionNavigator(Node):
             return
         if self.arm_last_ok:
             self.arm_last_ok = None
-            if label == "pick":
-                self._pick_index += 1
             self.script_i += 1
         else:
             self.get_logger().error(f"{label} failed — retry")
