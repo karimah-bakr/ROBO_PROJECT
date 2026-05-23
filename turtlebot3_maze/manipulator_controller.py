@@ -24,6 +24,7 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from std_msgs.msg import String
+from geometry_msgs.msg import Twist
 
 try:
     from open_manipulator_msgs.srv import SetJointPosition  # type: ignore
@@ -76,6 +77,13 @@ class ManipulatorControllerNode(Node):
         self.declare_parameter("gripper_open",  0.019)
         self.declare_parameter("gripper_close", -0.019)
         self.declare_parameter("step_wait_s",   4.0)
+        # Chassis micro-moves during pick (taken from the working course
+        # reference). Back off briefly so the wrist has room to swing down,
+        # then nudge forward to wedge the cube between the closing fingers.
+        self.declare_parameter("pick_back_speed_mps", 0.02)
+        self.declare_parameter("pick_back_seconds",   1.5)
+        self.declare_parameter("pick_fwd_speed_mps",  0.02)
+        self.declare_parameter("pick_fwd_seconds",    1.0)
         self.declare_parameter("require_gazebo_teleport", True)
         self.declare_parameter("gazebo_service_wait_s", 15.0)
 
@@ -86,11 +94,19 @@ class ManipulatorControllerNode(Node):
         self.g_open = float(self.get_parameter("gripper_open").value)
         self.g_close = float(self.get_parameter("gripper_close").value)
         self.step_wait = float(self.get_parameter("step_wait_s").value)
+        self.pick_back_v = float(self.get_parameter("pick_back_speed_mps").value)
+        self.pick_back_t = float(self.get_parameter("pick_back_seconds").value)
+        self.pick_fwd_v  = float(self.get_parameter("pick_fwd_speed_mps").value)
+        self.pick_fwd_t  = float(self.get_parameter("pick_fwd_seconds").value)
         self.require_tp = bool(self.get_parameter("require_gazebo_teleport").value)
         self._gz_wait = float(self.get_parameter("gazebo_service_wait_s").value)
 
         self.cmd_sub = self.create_subscription(String, "/arm_command", self._on_cmd, 5)
         self.status_pub = self.create_publisher(String, "/arm_status", 10)
+        # /cmd_vel for the back/forward chassis nudge during pick. Navigator
+        # holds station (arm_busy guard) while the arm is running so this
+        # doesn't fight a concurrent driving command.
+        self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
 
         self._joint_cli = None
         self._tool_cli = None
@@ -205,6 +221,23 @@ class ManipulatorControllerNode(Node):
             pose[0] = float(joint1)
         return pose
 
+    def _move_chassis(self, speed_x: float, seconds: float, label: str) -> None:
+        """Drive /cmd_vel at speed_x for seconds, then publish a stop."""
+        self.get_logger().info(
+            f"chassis {label}: {speed_x:+.3f} m/s for {seconds:.2f}s"
+        )
+        cmd = Twist()
+        cmd.linear.x = float(speed_x)
+        end = time.monotonic() + max(0.0, seconds)
+        while time.monotonic() < end:
+            self.cmd_vel_pub.publish(cmd)
+            time.sleep(0.05)
+        # brake
+        stop = Twist()
+        for _ in range(5):
+            self.cmd_vel_pub.publish(stop)
+            time.sleep(0.05)
+
     def _pick(self, pose: Optional[Tuple[float, float, float]]) -> bool:
         self.get_logger().info("PICK started")
         if self._next_object_idx >= len(OBJECT_NAMES):
@@ -218,11 +251,17 @@ class ManipulatorControllerNode(Node):
         lower = self._with_joint1(self.lower, j1)
         carry = self._with_joint1(self.carry, j1)
 
+        # Choreography mirrors the working course reference:
+        #   open → reach → back ~3cm → lower → close → forward ~2cm → carry
+        # The back step gives the wrist room to swing down without clipping
+        # the cube; the forward step wedges the cube between the fingers.
         arm_ok = True
         arm_ok &= self._send_gripper(self.g_open, "open gripper")
         arm_ok &= self._send_joints(reach, "reach")
+        self._move_chassis(-self.pick_back_v, self.pick_back_t, "back before grasp")
         arm_ok &= self._send_joints(lower, "lower")
         arm_ok &= self._send_gripper(self.g_close, "close gripper")
+        self._move_chassis(self.pick_fwd_v, self.pick_fwd_t, "fwd after grasp")
         arm_ok &= self._send_joints(carry, "carry")
         if not arm_ok:
             self.get_logger().warn("arm_controller trajectory incomplete")

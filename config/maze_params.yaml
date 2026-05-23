@@ -95,5 +95,12 @@ manipulator_controller:
     gripper_close:   -0.019
     # Generous step time so ros2_control settles between poses.
     step_wait_s:     4.0
+    # Chassis micro-moves around the grasp. Back ~3cm before lowering so
+    # the wrist can swing down without clipping the cube; nudge ~2cm
+    # forward after closing to wedge the cube between the fingers.
+    pick_back_speed_mps: 0.02
+    pick_back_seconds:   1.5
+    pick_fwd_speed_mps:  0.02
+    pick_fwd_seconds:    1.0
     require_gazebo_teleport: true
     gazebo_service_wait_s: 15.0
